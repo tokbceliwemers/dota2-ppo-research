@@ -63,3 +63,21 @@ provenance checks or the local-Dota evaluation gate with an offline library.
 4. Treat any purported Dota headless-server solution as an experiment until it
    can run the unchanged addon, send exact transitions over the loopback
    bridge, and match a manually observed local-lobby rollout.
+
+## Applied PPO/simulator audit (2026-08-05)
+
+The CleanRL/TorchRL review led to four tested changes in
+`replay_training`, without importing either package:
+
+1. Headless rollouts are now laid out environment-major before GAE, so values
+   and terminals never cross from one simulated lane into another.
+2. CUDA pretraining uses a GPU-resident simulator and only transfers a finished
+   batch once, while retaining the NumPy implementation as a test reference.
+3. A creep killed by allied pressure is a terminal failure in the approximation,
+   not an attackable dead target or a false positive last hit.
+4. PPO's value-loss scale and monitored KL approximation now follow the
+   compact CleanRL PPO reference.
+
+The local RTX 3080 smoke rebuild processed 131,072 approximate transitions in
+38.63 seconds (3,393 samples/second). This is a throughput measurement only;
+it is not real-Dota performance evidence.

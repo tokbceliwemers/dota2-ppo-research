@@ -16,8 +16,10 @@ from dota_ppo.data import (CURRENT_LOCAL_OBSERVATION_VERSION, CURRENT_LOCAL_REWA
 from dota_ppo.evaluation import evaluate_rollouts
 from dota_ppo.input_logs import canonicalize_jsonl, join_orders_to_states
 from dota_ppo.replays import build_replay_dataset
-from dota_ppo.train import PPOConfig, behavior_clone, ppo_update, ppo_update_headless_lane
-from dota_ppo.headless_lane import HeadlessLaneConfig, SOURCE as HEADLESS_SOURCE, HeadlessLane, collect_headless_rollout, train_headless_lane
+from dota_ppo.train import PPOConfig, _gae, behavior_clone, ppo_update, ppo_update_headless_lane
+from dota_ppo.headless_lane import (HeadlessLaneConfig, SOURCE as HEADLESS_SOURCE,
+                                    HeadlessLane, TorchHeadlessLane, collect_headless_rollout,
+                                    train_headless_lane)
 from dota_ppo.model import ActorCritic
 from dota_ppo.observations import OBSERVATION_DIM, OBSERVATION_VERSION, health_bar_fraction
 from dota_ppo.supervisor import SupervisorConfig, run_supervisor, validate_rollout
@@ -91,6 +93,25 @@ def test_headless_lane_uses_live_compatible_shapes_and_masks() -> None:
     assert masks[:, ACTION_IDS["ability_1"]].sum() == 0
 
 
+def test_headless_lane_ends_when_allied_pressure_kills_the_creep() -> None:
+    environment = HeadlessLane(4, seed=3, horizon=8)
+    environment.creep_hp[:] = 0.001
+    environment.allied_pressure[:] = 1.0
+    _obs, rewards, done, _masks = environment.step(np.zeros(4, dtype=np.int64))
+    assert done.all()
+    assert not (rewards >= 0.75).any()
+
+
+def test_torch_headless_lane_has_live_compatible_shapes() -> None:
+    environment = TorchHeadlessLane(4, torch.device("cpu"), seed=3, horizon=8)
+    observations, masks = environment.observation(), environment.action_masks()
+    assert observations.shape == (4, OBSERVATION_DIM)
+    assert masks.shape == (4, ACTION_DIM)
+    assert masks[:, 0].all()
+    _obs, _rewards, _done, after_masks = environment.step(torch.zeros(4, dtype=torch.long))
+    assert after_masks[:, ACTION_IDS["ability_1"]].sum() == 0
+
+
 def test_headless_lane_loads_only_measured_calibration_fields(tmp_path: Path) -> None:
     report = tmp_path / "calibration.json"
     report.write_text('{"source":"local_lane_calibration","measured_lane_config":{"tick_seconds":0.3,"hero_move_speed":305,"hero_attack_range":525,"unknown":2}}', encoding="utf-8")
@@ -108,7 +129,7 @@ def test_headless_lane_pretraining_is_separate_from_real_ppo(tmp_path: Path) -> 
     rollout = collect_headless_rollout(model, 16, 8, seed=5)
     assert rollout.source == HEADLESS_SOURCE
     assert len(rollout.actions) == 128
-    assert rollout.dones[-16:].all()
+    assert rollout.dones.reshape(16, 8)[:, -1].all()
     assert rollout.action_masks[np.arange(len(rollout.actions)), rollout.actions].all()
     ppo_update_headless_lane(rollout, model, torch.device("cpu"), PPOConfig(epochs=1, minibatch_size=32))
     output = tmp_path / "headless.pt"
@@ -116,6 +137,14 @@ def test_headless_lane_pretraining_is_separate_from_real_ppo(tmp_path: Path) -> 
     assert output.exists()
     assert result["source"] == HEADLESS_SOURCE
     assert result["samples"] == 128
+
+
+def test_gae_respects_environment_major_trajectory_boundaries() -> None:
+    rewards = torch.tensor([1.0, 2.0, 10.0, 20.0])
+    dones = torch.tensor([False, True, False, True])
+    advantages, returns = _gae(rewards, dones, torch.zeros(4), gamma=1.0, gae_lambda=1.0)
+    torch.testing.assert_close(advantages, torch.tensor([3.0, 2.0, 30.0, 20.0]))
+    torch.testing.assert_close(returns, advantages)
 
 
 def test_parquet_dataset_has_compatible_shapes(tmp_path: Path) -> None:

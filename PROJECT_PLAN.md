@@ -83,6 +83,11 @@ repeatable last-hit improvement in one controlled lane drill.
   bridge and the separate headless pretrainer. Fresh `lane_expert_bc_v3.pt`
   and calibration-informed `headless_lane_context_v3.pt` checkpoints exist;
   neither has yet been tested in a local-Dota `lane_v3` archive.
+- A CleanRL/TorchRL audit corrected a headless-only GAE trajectory-ordering
+  error, added a CUDA-resident vectorized simulator path, and made
+  allied-creep kills terminal without awarding a false last hit. The rebuilt
+  candidate consumed 131,072 approximate CUDA samples at 3,393 samples/second;
+  it remains `real_dota_verified: false`.
 
 ### Immediate next action
 

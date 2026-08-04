@@ -51,7 +51,7 @@ def parser() -> argparse.ArgumentParser:
     ppo = commands.add_parser("ppo"); ppo.add_argument("rollouts", type=Path); ppo.add_argument("--checkpoint", type=Path, required=True); ppo.add_argument("--output", type=Path, required=True); ppo.add_argument("--device", default="cuda"); ppo.add_argument("--epochs", type=int, default=10)
     headless = commands.add_parser("headless-lane-ppo", help="fast approximate lane PPO pretraining; requires real-Dota validation before promotion")
     headless.add_argument("--checkpoint", type=Path, required=True); headless.add_argument("--output", type=Path, required=True); headless.add_argument("--device", default="cuda")
-    headless.add_argument("--updates", type=int, default=8); headless.add_argument("--environments", type=int, default=1024); headless.add_argument("--horizon", type=int, default=96); headless.add_argument("--epochs", type=int, default=4); headless.add_argument("--seed", type=int, default=7); headless.add_argument("--calibration-report", type=Path)
+    headless.add_argument("--updates", type=int, default=8); headless.add_argument("--environments", type=int, default=1024); headless.add_argument("--horizon", type=int, default=96); headless.add_argument("--epochs", type=int, default=4); headless.add_argument("--minibatch-size", type=int, default=16_384); headless.add_argument("--seed", type=int, default=7); headless.add_argument("--calibration-report", type=Path)
     export = commands.add_parser("export"); export.add_argument("checkpoint", type=Path); export.add_argument("--output", type=Path, required=True); export.add_argument("--device", default="cpu")
     server = commands.add_parser("serve"); server.add_argument("model", type=Path); server.add_argument("--device", default="cuda")
     bridge = commands.add_parser("bridge", help="run the localhost policy and exact-rollout collector for a local custom lobby")
@@ -98,7 +98,7 @@ def main() -> int:
     elif args.command == "headless-lane-ppo":
         print(train_headless_lane(args.checkpoint, args.output, select_device(args.device), updates=args.updates,
                                   environments=args.environments, horizon=args.horizon, epochs=args.epochs, seed=args.seed,
-                                  calibration_report=args.calibration_report))
+                                  calibration_report=args.calibration_report, minibatch_size=args.minibatch_size))
     elif args.command == "export":
         print(export_torchscript(args.checkpoint, args.output, args.device))
     elif args.command == "bridge":

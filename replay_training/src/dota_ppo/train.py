@@ -116,12 +116,17 @@ def _ppo_update_for_source(rollouts: Rollouts, model: ActorCritic, device: torch
             log_ratio = log_probs - old_log_probs[indexes]
             ratio = log_ratio.exp()
             policy_loss = -torch.minimum(ratio * advantages[indexes], torch.clamp(ratio, 1 - config.clip_ratio, 1 + config.clip_ratio) * advantages[indexes]).mean()
-            value_loss = F.mse_loss(values, returns[indexes])
+            # Match the standard PPO value-loss convention used by CleanRL:
+            # 0.5 * squared error, followed by the configured value weight.
+            value_loss = 0.5 * F.mse_loss(values, returns[indexes])
             entropy = dist.entropy().mean()
             loss = policy_loss + config.value_coefficient * value_loss - config.entropy_coefficient * entropy
             optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm); optimizer.step()
             stats["policy_loss"].append(float(policy_loss.detach().cpu())); stats["value_loss"].append(float(value_loss.detach().cpu()))
-            stats["entropy"].append(float(entropy.detach().cpu())); stats["approx_kl"].append(float(((-log_ratio).mean()).detach().cpu()))
+            stats["entropy"].append(float(entropy.detach().cpu()))
+            # Non-negative second-order KL approximation used for monitoring;
+            # it is not used as a training objective or promotion metric.
+            stats["approx_kl"].append(float((((ratio - 1.0) - log_ratio).mean()).detach().cpu()))
     return {key: float(np.mean(value)) for key, value in stats.items()}
 
 
