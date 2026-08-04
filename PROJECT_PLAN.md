@@ -67,20 +67,29 @@ repeatable last-hit improvement in one controlled lane drill.
 - In a fresh local lobby, three consecutive forced enemy-wave clears each
   emitted `lane episode committed; starting fresh wave`; the new-wave reset
   path is now smoke-tested.
+- The first complete v4 A/B set passed all collection-quality gates: three
+  160-game-second archives per checkpoint, valid action masks, terminal
+  episodes, and comparable cadence (baseline 3.705 versus candidate 3.732
+  decisions/game-second). The calibrated headless candidate was rejected:
+  reward per step was `-0.01067` versus the baseline's `-0.00890`, it produced
+  6 versus 9 last-hit signals, and both had 13 death signals. It is not
+  eligible for real-Dota PPO promotion.
 
 ### Immediate next action
 
-1. Smoke-test the fixed-progression reset, then collect a new frozen-baseline
-   set and a new candidate set under `lane_wave_clear_v4_fixed_progression`:
-   three complete 1x archives per policy, each at least
-   150 game seconds. Do not use `rl_ppo_speed_*`.
-2. Compare only equal `reward_version` sets with `dota-ppo compare-rollouts`.
-   A preliminary candidate win needs higher reward/step, more last-hit signals,
-   no extra deaths, valid action masks, completed episodes, and comparable
-   cadence.
+1. Design and implement a new, versioned local observation contract before
+   another candidate comparison. `lane-v2` exposes only the nearest enemy
+   creep's relative geometry and ally/enemy counts; it does not expose an ally
+   creep's position or health. Add stable, target-relative allied-wave context
+   and relevant attack-timing state to the local addon and headless simulator
+   in lockstep. Record and validate the observation version so different state
+   contracts cannot be merged or compared.
+2. Create fresh baseline and candidate checkpoints for that new contract, then
+   collect three complete normal-speed archives per policy. Compare only equal
+   reward and observation versions with `dota-ppo compare-rollouts`.
 3. Only after repeatable local improvement, collect fresh on-policy data from
    the chosen policy and run one PPO update. Archive the data, report, reward
-   version, and resulting checkpoint together.
+   version, observation version, and resulting checkpoint together.
 
 **Exit criteria:** several independent `lane_wave_clear_v4_fixed_progression` batches show stable
 last-hit reward improvement over the frozen movement/behavior-cloning baseline,
