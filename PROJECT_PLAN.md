@@ -141,11 +141,12 @@ early stop and produces an incomplete batch, so it is not valid for the
 
 ## Research references - `librarys`
 
-The seven pinned research checkouts are documented in `librarys/LIBRARIES.md`:
-`manta`, `dota2py`, `redota`, `LastOrder-Dota2`, `dotaclient`, `dotaservice`,
-and `clarity`. They are references only, not runtime dependencies. None is a
-maintained, faithful, high-speed Dota simulator; the local client remains the
-authority for on-policy PPO evidence.
+Fourteen pinned research checkouts are documented in `librarys/LIBRARIES.md`.
+They cover replay parsing, PPO/vector-environment engineering, imitation,
+future multi-agent interfaces, Dota constants, and historical Dota AI work.
+They are references only, not runtime dependencies. None is a maintained,
+faithful, high-speed Dota simulator; the local client remains the authority for
+on-policy PPO evidence.
 
 ## Promotion rule
 

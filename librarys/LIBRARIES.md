@@ -1,59 +1,65 @@
-# Downloaded reference libraries
+# Research reference library inventory
 
-These repositories are local research references. They are not imported by the
-Python package or copied into the deployed Dota addon.
+These are pinned source references, downloaded on 2026-08-05. They are not
+Python dependencies, are not vendored into the Dota addon, and are never a
+source of PPO transitions. The real local Dota custom lobby remains the sole
+authority for `local_instrumented_lobby` data.
 
-| Folder | Upstream | Pinned commit | License status | Intended use |
+## Current references
+
+| Folder | Pinned revision | License | What it can contribute | Decision |
 | --- | --- | --- | --- | --- |
-| `manta` | https://github.com/dotabuff/manta | `0efe7e11c40a4f149f6414b2d162320de34e8446` | MIT (`LICENSE` present) | Inspect modern Source 2 replay entities/events if `gem-dota` lacks fields needed for offline analysis. |
-| `dota2py` | https://github.com/andrewsnowden/dota2py | `67637f4b9c160ea90c11b7e81545baf350affa7a` | `LICENSE` present | Historical Web API and replay-parser reference; not a simulator. |
-| `redota` | https://github.com/timkurvers/redota | `f51e568e6ef45e32e1a7d21def805bdd7604568b` | `LICENSE.md` present | Web visualisation/icons project; no environment or bot-control runtime. |
-| `LastOrder-Dota2` | https://github.com/bilibili/LastOrder-Dota2 | `48f212b6749956c9de1b0dc2d5e5e406f78b62d7` | `LICENSE` present | Historical Shadow Fiend PPO/world-state architecture reference; launches a live Dota process, so not adopted as a runtime. |
-| `dotaclient` | https://github.com/TimZaman/dotaclient | `8615b90b7d5b61005f51ba8e73cab206db1d1731` | no root license found | Historical distributed agent that depends on DotaService world-state RPC; its batching and action-mask patterns are references only. |
-| `dotaservice` | https://github.com/TimZaman/dotaservice | `733db265f04fa10caab57fa34f7f85861095dc2e` | `LICENSE` present | Historical bot-world-state/Dota-host launcher; documents non-rendered hosting but is not compatible evidence for the current Windows client. |
-| `clarity` | https://github.com/skadistats/clarity | `7fb3f1d07564a12efa99194d45cfbf5762ba5910` | `LICENSE` present | Active Java replay parser for entities, combat logs, modifiers, and game events; useful for Stage 1 only. |
+| `manta` | `0efe7e11c40a4f149f6414b2d162320de34e8446` | MIT | Source 2 replay entities/events | Stage 1 parser reference only. |
+| `clarity` | `7fb3f1d07564a12efa99194d45cfbf5762ba5910` | license present | Java replay parsing, combat logs, modifiers | Stage 1 parser reference only. |
+| `dota2py` | `67637f4b9c160ea90c11b7e81545baf350affa7a` | license present | Historical Python replay/Web API patterns | Historical parser reference only. |
+| `redota` | `f51e568e6ef45e32e1a7d21def805bdd7604568b` | license present | Web replay visualisation/icons | Not an environment; defer. |
+| `LastOrder-Dota2` | `48f212b6749956c9de1b0dc2d5e5e406f78b62d7` | license present | Historical Shadow Fiend world-state/PPO design | Audit observations/rewards only; do not adopt its launcher. |
+| `dotaclient` | `8615b90b7d5b61005f51ba8e73cab206db1d1731` | no root license found | Historical distributed-agent batching | Read-only design reference; do not reuse code. |
+| `dotaservice` | `733db265f04fa10caab57fa34f7f85861095dc2e` | license present | Historical Dota host/world-state RPC | Timing and observation ideas already considered; transport deferred. |
+| `cleanrl` | `fe8d8a03c41a7ef5b523e2e354bd01c363e786bb` | MIT | Compact PPO, GAE, vector-env, logging reference | Immediate audit reference for simulator/PPO tests; no dependency. |
+| `gymnasium` | `07eb046aab0bef15b16843eba0f9cafde5f9884d` | MIT | Standard reset/step/termination contract | Use as an interface/testing reference for `headless_lane`; no dependency yet. |
+| `torchrl` | `ae421b98d0dba86e5ab0b24917d1e64f376ee6f9` | MIT | PyTorch collectors, tensorized batches, PPO objectives | Audit collector/terminal semantics; dependency deferred to avoid a large rewrite. |
+| `imitation` | `e5ef18806c449ca47153b494a02471c5e2ae3a14` | MIT | Behavior cloning and offline-imitation evaluation | Future Stage 1 supervised-order experiments only; never turns `.dem` guesses into PPO. |
+| `dotaconstants` | `e7705ee975ebec2a88a59a7b455d4cae5dc69ca1` | MIT | Hero/item/ability constant snapshots | Future Stage 3 action mapping; verify all values against the installed Dota build. |
+| `pettingzoo` | `761353e6a9d29cb3c6b88232e50ee036f94b08fd` | MIT | Versioned multi-agent API and parallel-step semantics | Future Stage 3 bot/self-play simulator interface reference. |
+| `pydota2_archive` | `f33233ee5393a248e9845bb25ff234bf7ac9ff82` | Apache-2.0 | Historical BotWorldState and training-scenario research | Do not use its transport/protocol path; it is historical and outside this project's local-addon boundary. |
 
-Neither repository supplies a high-speed, faithful Dota simulator. The real
-client remains the authoritative source for on-policy PPO rollouts. Fast
-synthetic pretraining, if added later, must remain separate from real-client
-PPO evaluation.
+## Research result: how to make training materially faster
 
-## 2026 headless-lane decision
+There are two valid acceleration layers, and they must keep separate labels.
 
-The requested references were downloaded and audited. `dota2py`, `clarity`,
-and `manta` parse offline material; `redota` visualises it; the remaining
-three use obsolete world-state/bot interfaces around a running Dota process.
-None provides a maintained, faithful, render-free Dota simulator.
+1. **Fast approximate training.** `headless_lane` can run thousands of
+   vectorized transitions on CUDA. CleanRL, Gymnasium, and TorchRL are useful
+   references for terminal/truncation handling, batched collection, GAE, and
+   reproducible episode statistics. This is where most wall-clock speedup is
+   available now. Outputs remain `headless_lane_simulator` and
+   `real_dota_verified: false`.
+2. **Exact local-Dota validation.** A local Dota addon supplies the actual
+   entity state, orders, rewards, and action masks. It is slower because the
+   Dota simulation is the environment. No downloaded project was found to be a
+   maintained, documented, Windows-compatible, render-free Dota custom-game
+   host that preserves the current addon contract.
 
-The project therefore implements its own small vectorised `headless_lane`
-environment in `replay_training/src/dota_ppo/headless_lane.py`. It models only
-the current 18-feature lane-v2 contract: movement to a creep, range, health,
-last-hit timing, and a survival penalty. It uses all 24 action IDs but masks
-unsupported ability/item actions. It is deliberately labelled
-`headless_lane_simulator` and its output checkpoints have
-`real_dota_verified: false`. They cannot be saved as, merged with, evaluated
-as, or PPO-trained as `local_instrumented_lobby` data.
+The historical `pydota2_archive` project explicitly describes high-speed
+headless play as needing Valve support. Its BotWorldState route is not adopted:
+it is not a supported replacement for the current local VScript addon and
+would violate the project's no-protocol-injection boundary.
 
-On an RTX 3080, the 2026-08-04 smoke run collected and updated 16,384
-simulator transitions in 6.82 seconds (2,401 samples/second). This measures
-pretraining throughput only; promotion still requires a new exact local Dota
-rollout and a comparable real-lobby evaluation.
+## Explicitly deferred dependencies
 
-## Applied pattern from LuaFun and dotaservice
+Do not install CleanRL, Gymnasium, TorchRL, imitation, or PettingZoo into this
+project merely because their source is present here. Adopting one requires a
+small, tested change with a clear benefit. In particular, do not replace the
+provenance checks or the local-Dota evaluation gate with an offline library.
 
-The local bridge now records `game_times` alongside every exact PPO decision.
-`dota-ppo evaluate-rollouts` reports decision coverage per game-second and
-decision gaps, making the `host_timescale` speed-up measurable. This follows
-their useful timing/observation-contract idea without adopting their obsolete
-transport or bot-control code.
+## Practical next research candidates
 
-See [DOTASERVICE_REVIEW.md](DOTASERVICE_REVIEW.md) for the complete applied,
-deferred, and explicitly rejected design decisions.
-
-## Removed reference checkouts
-
-| Folder | Revision | Reason removed |
-| --- | --- | --- |
-| `Dota2_Bots` | `094168195c4cb13cb2d995e216be54545fe5b14c` | No license file was present, it is not imported, and it is not needed until a future controlled-bot stage. |
-| `LuaFun` | `bd0efd8fc2b064d6bf58993e59a6ad4ac6713b39` | Historical 2021 environment; not compatible as a current runtime dependency. Its timing/observation-stride lesson was recorded. |
-| `dotaservice` | `733db265f04fa10caab57fa34f7f85861095dc2e` | Historical 2019 gRPC/native bot stack; no current dependency. Its game-time calibration pattern has already been implemented. |
+1. Compare the present headless PPO GAE/terminal tests directly with CleanRL's
+   PPO reference; adopt only independently testable corrections.
+2. Add a Gymnasium-compatible wrapper for the headless simulator if it reduces
+   testing friction without changing its labels or promotion status.
+3. Before Stage 3, use `dotaconstants` only to generate a checked action map;
+   confirm it against the installed game data at that time.
+4. Treat any purported Dota headless-server solution as an experiment until it
+   can run the unchanged addon, send exact transitions over the loopback
+   bridge, and match a manually observed local-lobby rollout.
