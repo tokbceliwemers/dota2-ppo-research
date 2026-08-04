@@ -59,6 +59,19 @@ def test_ppo_updates_exact_local_rollout() -> None:
     assert set(metrics) == {"policy_loss", "value_loss", "entropy", "approx_kl"}
 
 
+def test_v4_lane_addon_enforces_fixed_shadow_fiend_progression() -> None:
+    addon = Path(__file__).parents[1] / "dota_addon" / "scripts" / "vscripts"
+    scenario = (addon / "rl_lane_scenario.lua").read_text(encoding="utf-8")
+    entry = (addon / "addon_game_mode.lua").read_text(encoding="utf-8")
+    bridge = (addon / "rl_ppo_bridge.lua").read_text(encoding="utf-8")
+    assert 'SetModifyExperienceFilter(Dynamic_Wrap(GameMode, "FilterModifyExperience"), self)' in entry
+    assert 'filter["hero_entindex_const"] == hero:entindex()' in entry
+    assert 'modifier_nevermore_necromastery' in scenario
+    assert 'ability:SetLevel(0)' in scenario
+    assert 'modifier:SetStackCount(0)' in scenario
+    assert 'lane_wave_clear_v4_fixed_progression' in bridge
+
+
 def test_headless_lane_uses_live_compatible_shapes_and_masks() -> None:
     environment = HeadlessLane(16, seed=3, horizon=8)
     observations, masks = environment.observation(), environment.action_masks()

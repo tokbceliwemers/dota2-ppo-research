@@ -3,6 +3,9 @@
 
 if RLLaneScenario == nil then RLLaneScenario = class({}) end
 
+local NECROMASTERY_ABILITY = "nevermore_necromastery"
+local NECROMASTERY_MODIFIER = "modifier_nevermore_necromastery"
+
 local function enemy_team(team)
     return team == DOTA_TEAM_GOODGUYS and DOTA_TEAM_BADGUYS or DOTA_TEAM_GOODGUYS
 end
@@ -33,6 +36,25 @@ function RLLaneScenario:RemoveCreeps()
     self.creeps = {}
 end
 
+function RLLaneScenario:ClearNecromastery()
+    -- Necromastery stacks change attack damage, so letting them survive a
+    -- wave would make later episodes easier than earlier ones.  Keep this
+    -- micro-curriculum about movement and last-hit timing, not soul farming.
+    local ability = self.hero:FindAbilityByName(NECROMASTERY_ABILITY)
+    if ability ~= nil and ability:GetLevel() ~= 0 then ability:SetLevel(0) end
+    local modifier = self.hero:FindModifierByName(NECROMASTERY_MODIFIER)
+    if modifier ~= nil then modifier:SetStackCount(0) end
+    self.hero:RemoveModifierByName(NECROMASTERY_MODIFIER)
+end
+
+function RLLaneScenario:NormalizeHeroProgression()
+    -- The experience filter is the authoritative guard.  These assignments
+    -- also repair any XP or ability state that existed before a reset.
+    if self.hero.SetCurrentXP ~= nil and self.hero:GetCurrentXP() ~= 0 then self.hero:SetCurrentXP(0) end
+    if self.hero.SetAbilityPoints ~= nil then self.hero:SetAbilityPoints(0) end
+    self:ClearNecromastery()
+end
+
 function RLLaneScenario:SpawnWave(team, origin, direction, tracked_enemy_wave)
     local melee, ranged = creep_names(team)
     local names = {melee, melee, melee, ranged}
@@ -50,13 +72,14 @@ function RLLaneScenario:Reset()
     self:RemoveCreeps()
     if not self.hero:IsAlive() then self.hero:RespawnHero(false, false) end
     FindClearSpaceForUnit(self.hero, self.anchor, true)
-    -- This is a fixed-state last-hit curriculum, not a full match. Reset
-    -- progression so experience and gold cannot make later waves easier.
-    if self.hero.SetHeroLevel ~= nil then self.hero:SetHeroLevel(1, true) end
+    -- This is a fixed-state last-hit curriculum, not a full match. A fresh
+    -- lobby starts at Level 1; the experience filter prevents later levels.
     if self.hero.SetCurrentXP ~= nil then self.hero:SetCurrentXP(0) end
+    if self.hero.SetHeroLevel ~= nil then self.hero:SetHeroLevel(1, false) end
     if self.bridge.player_id ~= nil and PlayerResource.SetGold ~= nil then
         PlayerResource:SetGold(self.bridge.player_id, 0, false)
     end
+    self:NormalizeHeroProgression()
     self.hero:SetHealth(self.hero:GetMaxHealth())
     self.last_hits = 0
     self.enemy_creeps = {}
@@ -87,6 +110,7 @@ function RLLaneScenario:OnEntityKilled(event)
     if attacker == self.hero and victim:IsCreep() then
         self.last_hits = self.last_hits + 1
         self.bridge:AddReward(1.0, "last_hit")
+        self:ClearNecromastery()
     elseif victim == self.hero then
         self.bridge:AddReward(-2.0, "hero_death")
         self:EndEpisode()
@@ -111,6 +135,7 @@ function RLLaneScenario:EndEpisode(reason)
 end
 
 function RLLaneScenario:Think()
+    self:NormalizeHeroProgression()
     if self.waiting_for_terminal then
         -- The normal path resets from the terminal HTTP callback.  This is a
         -- safe recovery for a missed callback: only reset after the bridge

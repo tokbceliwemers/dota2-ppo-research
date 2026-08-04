@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 
-CURRENT_LOCAL_REWARD_VERSION = "lane_wave_clear_v3_fixed_progression"
+CURRENT_LOCAL_REWARD_VERSION = "lane_wave_clear_v4_fixed_progression"
 
 
 def checkpoint_sha256(path: Path) -> str:

@@ -36,7 +36,7 @@ function RLPPOBridge:Start(hero, player_id, base_url)
     self.episode_end_requested = false
     self.bonus_reward = 0
     self.previous_creep_distance = 800
-    self.reward_version = "lane_wave_clear_v3_fixed_progression"
+    self.reward_version = "lane_wave_clear_v4_fixed_progression"
 end
 
 function RLPPOBridge:Post(path, payload, callback)

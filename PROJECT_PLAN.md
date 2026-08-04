@@ -29,7 +29,7 @@ behavior-cloning dataset exist, with provenance recorded.
 **Purpose:** collect exact on-policy local-Dota trajectories and demonstrate
 repeatable last-hit improvement in one controlled lane drill.
 
-### Current lane curriculum: `lane_wave_clear_v3_fixed_progression`
+### Current lane curriculum: `lane_wave_clear_v4_fixed_progression`
 
 - Observation contract: `lane-v2`, 18 features and 24 action IDs; ability and
   item actions remain masked.
@@ -40,10 +40,11 @@ repeatable last-hit improvement in one controlled lane drill.
 - On a wave-clear terminal, the exact final transition is committed first;
   Shadow Fiend and a fresh scripted wave then reset. A settled-state recovery
   path handles a missed terminal callback.
-- Shadow Fiend resets to Level 1 with zero XP and gold for every wave, keeping
-  the micro-curriculum stationary instead of making later waves easier.
+- Shadow Fiend receives no experience, has zero ability points, and clears
+  Necromastery level/stacks for every wave, keeping the micro-curriculum
+  stationary instead of making later waves easier.
 - Every new archive records `reward_version:
-  lane_wave_clear_v3_fixed_progression`. Older archives are not comparable
+  lane_wave_clear_v4_fixed_progression`. Older archives are not comparable
   with, or training data for, this curriculum.
 
 ### Verified evidence
@@ -70,7 +71,7 @@ repeatable last-hit improvement in one controlled lane drill.
 ### Immediate next action
 
 1. Smoke-test the fixed-progression reset, then collect a new frozen-baseline
-   set and a new candidate set under `lane_wave_clear_v3_fixed_progression`:
+   set and a new candidate set under `lane_wave_clear_v4_fixed_progression`:
    three complete 1x archives per policy, each at least
    150 game seconds. Do not use `rl_ppo_speed_*`.
 2. Compare only equal `reward_version` sets with `dota-ppo compare-rollouts`.
@@ -81,7 +82,7 @@ repeatable last-hit improvement in one controlled lane drill.
    the chosen policy and run one PPO update. Archive the data, report, reward
    version, and resulting checkpoint together.
 
-**Exit criteria:** several independent `lane_wave_clear_v3_fixed_progression` batches show stable
+**Exit criteria:** several independent `lane_wave_clear_v4_fixed_progression` batches show stable
 last-hit reward improvement over the frozen movement/behavior-cloning baseline,
 with no reset, action-mask, or cadence faults.
 

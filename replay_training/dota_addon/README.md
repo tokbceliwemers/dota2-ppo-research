@@ -21,7 +21,7 @@ created or selected the bot hero. Its `Think()` method must be registered with
 the mode's thinker, and `Finish()` must be called at the local episode end.
 
 The current reference runs the versioned
-`lane_wave_clear_v3_fixed_progression` last-hit curriculum: opposing creep
+`lane_wave_clear_v4_fixed_progression` last-hit curriculum: opposing creep
 waves spawn near the controlled hero, a cleared enemy wave (or the 75-second
 fallback) ends the episode, and the next wave resets the hero to Level 1 with
 zero XP and gold. Hero last hits receive reward and death is penalized. It

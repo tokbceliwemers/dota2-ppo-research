@@ -158,7 +158,7 @@ item actions remain masked until target-selection heads are implemented.
 ### Last-hit curriculum and batch collection
 
 The local addon runs repeatable Shadow Fiend lane drills under
-`lane_wave_clear_v3_fixed_progression`. It spawns a tracked enemy wave, gives
+`lane_wave_clear_v4_fixed_progression`. It spawns a tracked enemy wave, gives
 `+1` for each hero last hit and `-2` for hero death, records every drill
 boundary as a PPO terminal state, then resets Shadow Fiend to Level 1, zero XP,
 and zero gold before starting a fresh wave. See `PROJECT_PLAN.md` for the

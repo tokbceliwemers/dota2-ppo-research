@@ -23,6 +23,7 @@ function GameMode:InitGameMode()
     self.rl_bridge = RLPPOBridge()
     self.rl_scenario = RLLaneScenario()
     GameRules:GetGameModeEntity():SetExecuteOrderFilter(Dynamic_Wrap(GameMode, "FilterExecuteOrder"), self)
+    GameRules:GetGameModeEntity():SetModifyExperienceFilter(Dynamic_Wrap(GameMode, "FilterModifyExperience"), self)
     ListenToGameEvent("npc_spawned", Dynamic_Wrap(GameMode, "OnNPCSpawned"), self)
     ListenToGameEvent("game_rules_state_change", Dynamic_Wrap(GameMode, "OnGameStateChanged"), self)
     ListenToGameEvent("entity_killed", Dynamic_Wrap(GameMode, "OnEntityKilled"), self)
@@ -35,6 +36,9 @@ function GameMode:InitGameMode()
     Convars:RegisterCommand("rl_ppo_timer", function()
         if GameRules.GameMode ~= nil then GameRules.GameMode:PrintBatchTimer() end
     end, "Local-only: print PPO batch timer status", 0)
+    Convars:RegisterCommand("rl_ppo_progress", function()
+        if GameRules.GameMode ~= nil then GameRules.GameMode:PrintRLProgress() end
+    end, "Local-only: print fixed-progression curriculum state", 0)
     Convars:RegisterCommand("rl_ppo_speed_2", function()
         if GameRules.GameMode ~= nil then GameRules.GameMode:SetRLPPOTimeScale(2) end
     end, "Local-only: run the lane curriculum at 2x simulation speed", 0)
@@ -108,6 +112,21 @@ function GameMode:PrintBatchTimer()
     local elapsed = math.max(GameRules:GetGameTime() - self.rl_batch_started_at, 0)
     local remaining = math.max(RL_BATCH_SECONDS - elapsed, 0)
     print(string.format("RL PPO batch timer: %d seconds elapsed, %d seconds remaining", math.floor(elapsed), math.ceil(remaining)))
+end
+
+function GameMode:PrintRLProgress()
+    local hero = self.rl_bridge ~= nil and self.rl_bridge.hero or nil
+    if hero == nil or hero:IsNull() then
+        print("RL PPO progression: no controlled hero is available")
+        return
+    end
+    local ability = hero:FindAbilityByName("nevermore_necromastery")
+    local modifier = hero:FindModifierByName("modifier_nevermore_necromastery")
+    local ability_level = ability ~= nil and ability:GetLevel() or 0
+    local stacks = modifier ~= nil and modifier:GetStackCount() or 0
+    local gold = self.rl_bridge.player_id ~= nil and PlayerResource:GetGold(self.rl_bridge.player_id) or 0
+    print(string.format("RL PPO progression: level=%d xp=%d gold=%d necromastery_level=%d necromastery_stacks=%d",
+        hero:GetLevel(), math.floor(hero:GetCurrentXP()), gold, ability_level, stacks))
 end
 
 function GameMode:BatchTimerThink()
@@ -190,5 +209,15 @@ end
 
 function GameMode:FilterExecuteOrder(filter)
     if self.rl_bridge ~= nil then self.rl_bridge:LogHumanOrder(filter) end
+    return true
+end
+
+function GameMode:FilterModifyExperience(filter)
+    -- Do not allow creep XP to promote the controlled hero during a fixed
+    -- Level-1 last-hit drill.  Other entities keep normal custom-lobby XP.
+    local hero = self.rl_bridge ~= nil and self.rl_bridge.hero or nil
+    if hero ~= nil and not hero:IsNull() and filter["hero_entindex_const"] == hero:entindex() then
+        return false
+    end
     return true
 end
