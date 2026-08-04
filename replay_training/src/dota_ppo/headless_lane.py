@@ -19,7 +19,7 @@ import torch
 from .actions import ACTION_DIM, ACTION_IDS
 from .data import Rollouts
 from .model import ActorCritic
-from .observations import OBSERVATION_DIM
+from .observations import OBSERVATION_DIM, OBSERVATION_VERSION, health_bar_fraction
 from .train import PPOConfig, _checkpoint, load_model, ppo_update_headless_lane
 
 
@@ -74,6 +74,11 @@ class HeadlessLane:
         self.creep_x = np.zeros(environments, dtype=np.float32)
         self.creep_y = np.zeros(environments, dtype=np.float32)
         self.creep_hp = np.ones(environments, dtype=np.float32)
+        self.previous_creep_hp = np.ones(environments, dtype=np.float32)
+        self.ally_x = np.zeros(environments, dtype=np.float32)
+        self.ally_y = np.zeros(environments, dtype=np.float32)
+        self.ally_hp = np.ones(environments, dtype=np.float32)
+        self.allied_pressure = np.zeros(environments, dtype=np.float32)
         self.ally_count = np.zeros(environments, dtype=np.float32)
         self.enemy_count = np.zeros(environments, dtype=np.float32)
         self.attack_ready_at = np.zeros(environments, dtype=np.float32)
@@ -91,6 +96,13 @@ class HeadlessLane:
         self.creep_x[mask] = np.cos(angle) * distance
         self.creep_y[mask] = np.sin(angle) * distance
         self.creep_hp[mask] = self.rng.uniform(0.18, 1.0, count)
+        self.previous_creep_hp[mask] = self.creep_hp[mask]
+        ally_angle = self.rng.uniform(-np.pi, np.pi, count)
+        ally_distance = self.rng.uniform(50.0, 260.0, count)
+        self.ally_x[mask] = self.creep_x[mask] + np.cos(ally_angle) * ally_distance
+        self.ally_y[mask] = self.creep_y[mask] + np.sin(ally_angle) * ally_distance
+        self.ally_hp[mask] = self.rng.uniform(0.2, 1.0, count)
+        self.allied_pressure[mask] = self.rng.integers(0, 5, count) / 4.0
         self.ally_count[mask] = self.rng.integers(1, 5, count) / 4.0
         self.enemy_count[mask] = self.rng.integers(1, 5, count) / 4.0
         self.step_index[mask] = 0
@@ -100,26 +112,35 @@ class HeadlessLane:
     def observation(self) -> np.ndarray:
         dx, dy = self.creep_x - self.hero_x, self.creep_y - self.hero_y
         distance = np.hypot(dx, dy)
+        ally_dx, ally_dy = self.ally_x - self.hero_x, self.ally_y - self.hero_y
+        ally_distance = np.hypot(ally_dx, ally_dy)
         result = np.zeros((self.n, OBSERVATION_DIM), dtype=np.float32)
-        # Existing base layout is only a stable schema; lane data occupies the
-        # eight live-compatible fields used by the deployed bridge.
+        # Base fields are a stable schema; the suffix mirrors the live
+        # health-bar and allied-pressure context used by the deployed bridge.
         result[:, 4] = self.step_index / float(self.horizon)
         result[:, 8] = self.hero_hp
         lane = result[:, 10:]
         lane[:, 0] = np.clip(dx / 800.0, -1.0, 1.0)
         lane[:, 1] = np.clip(dy / 800.0, -1.0, 1.0)
         lane[:, 2] = np.clip(distance / 800.0, 0.0, 1.0)
-        lane[:, 3] = self.creep_hp
-        lane[:, 4] = distance <= self.config.hero_attack_range
-        lane[:, 5] = self.creep_hp <= self.config.last_hit_health
-        lane[:, 6] = self.enemy_count
-        lane[:, 7] = self.ally_count
+        lane[:, 3] = health_bar_fraction(self.creep_hp)
+        lane[:, 4] = np.clip((self.previous_creep_hp - self.creep_hp) / self.config.tick_seconds, -1.0, 1.0)
+        lane[:, 5] = self.config.hero_attack_damage
+        lane[:, 6] = distance <= self.config.hero_attack_range
+        lane[:, 7] = self.allied_pressure
+        lane[:, 8] = np.clip(ally_dx / 800.0, -1.0, 1.0)
+        lane[:, 9] = np.clip(ally_dy / 800.0, -1.0, 1.0)
+        lane[:, 10] = np.clip(ally_distance / 800.0, 0.0, 1.0)
+        lane[:, 11] = health_bar_fraction(self.ally_hp)
+        lane[:, 12] = self.enemy_count
+        lane[:, 13] = self.ally_count
+        lane[:, 14] = np.clip((self.attack_ready_at - self.time) / self.config.hero_attack_cooldown, 0.0, 1.0)
         return result
 
     def action_masks(self) -> np.ndarray:
         masks = np.zeros((self.n, ACTION_DIM), dtype=bool)
         masks[:, :10] = True  # idle, eight movement directions, attack
-        masks[:, ACTION_IDS["attack"]] = self.observation()[:, 14] > 0
+        masks[:, ACTION_IDS["attack"]] = self.observation()[:, 16] > 0
         return masks
 
     def step(self, actions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -127,6 +148,7 @@ class HeadlessLane:
         if actions.shape != (self.n,):
             raise ValueError(f"actions must have shape ({self.n},)")
         before_distance = np.hypot(self.creep_x - self.hero_x, self.creep_y - self.hero_y)
+        self.previous_creep_hp = self.creep_hp.copy()
         directions = np.array(((0, 0), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1)), dtype=np.float32)
         moving = (actions >= 1) & (actions <= 8)
         move_distance = self.config.hero_move_speed * self.config.tick_seconds
@@ -141,7 +163,7 @@ class HeadlessLane:
         valid_hit = can_attack & ~ready
         self.creep_hp[valid_hit] -= self.config.hero_attack_damage
         self.attack_ready_at[can_attack] = self.time[can_attack] + self.config.hero_attack_cooldown
-        self.creep_hp -= self.config.creep_passive_damage * (1.0 + self.ally_count)
+        self.creep_hp -= self.config.creep_passive_damage * (1.0 + self.allied_pressure)
         near_enemy = distance <= self.config.hero_attack_range + self.config.attack_range_buffer
         self.hero_hp[near_enemy] -= self.config.hero_damage_near_creep * self.enemy_count[near_enemy]
         progress = np.clip((before_distance - distance) / 800.0, -0.03, 0.03)
@@ -171,6 +193,10 @@ def collect_headless_rollout(model: ActorCritic, environments: int, horizon: int
         _next, reward, done, _next_mask = env.step(action.cpu().numpy())
         observations.append(obs); actions.append(action.cpu().numpy()); rewards.append(reward); dones.append(done)
         log_probs.append(log_prob.cpu().numpy()); values.append(value.cpu().numpy()); masks.append(mask)
+    # A vectorized collection horizon is itself an episode boundary for every
+    # lane.  Without this explicit settlement, the final parallel lane can be
+    # mid-episode and PPO correctly refuses the batch.
+    dones[-1] = np.ones(environments, dtype=bool)
     rollout = Rollouts(
         np.concatenate(observations), np.concatenate(actions), np.concatenate(rewards), np.concatenate(dones), SOURCE,
         np.concatenate(log_probs), np.concatenate(values), np.concatenate(masks), None,
@@ -187,7 +213,7 @@ def train_headless_lane(checkpoint_in: Path, checkpoint_out: Path, device: torch
         raise ValueError("updates must be positive")
     model = load_model(checkpoint_in, device)
     if model.observation_dim != OBSERVATION_DIM or model.action_dim != ACTION_DIM:
-        raise ValueError("headless lane trainer requires the current lane-v2 observation/action contract")
+        raise ValueError("headless lane trainer requires the current lane-v3 observation/action contract")
     started = time.perf_counter(); metrics: list[dict[str, float]] = []
     config = PPOConfig(epochs=epochs)
     lane_config = (HeadlessLaneConfig.from_calibration(calibration_report)
@@ -201,6 +227,7 @@ def train_headless_lane(checkpoint_in: Path, checkpoint_out: Path, device: torch
         "algorithm": "headless_lane_simulator_ppo", "source": SOURCE, "updates": updates,
         "environments": environments, "horizon": horizon, "epochs": epochs,
         "real_dota_verified": False, "metrics": metrics[-1],
+        "observation_version": OBSERVATION_VERSION,
         "lane_config": asdict(lane_config),
         "calibration_report": str(calibration_report) if calibration_report is not None else None,
     })

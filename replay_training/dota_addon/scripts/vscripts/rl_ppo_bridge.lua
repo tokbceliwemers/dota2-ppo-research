@@ -7,7 +7,8 @@ require("game/dkjson")
 if RLPPOBridge == nil then RLPPOBridge = class({}) end
 
 local ACTION_COUNT = 24
-local OBSERVATION_DIM = 18
+local OBSERVATION_DIM = 25
+local HEALTH_BAR_SEGMENTS = 20
 local DIRECTIONS = {
     move_north = Vector(0, 1, 0), move_north_east = Vector(1, 1, 0),
     move_east = Vector(1, 0, 0), move_south_east = Vector(1, -1, 0),
@@ -16,6 +17,15 @@ local DIRECTIONS = {
 }
 local DIRECTION_ACTIONS = {"move_north", "move_north_east", "move_east", "move_south_east",
     "move_south", "move_south_west", "move_west", "move_north_west"}
+
+local function clamp(value, low, high)
+    return math.max(low, math.min(value, high))
+end
+
+local function health_bar_fraction(health, max_health)
+    local fraction = clamp(health / math.max(max_health, 1), 0, 1)
+    return math.floor(fraction * HEALTH_BAR_SEGMENTS + 0.5) / HEALTH_BAR_SEGMENTS
+end
 
 function RLPPOBridge:Start(hero, player_id, base_url)
     self.hero = hero
@@ -36,6 +46,9 @@ function RLPPOBridge:Start(hero, player_id, base_url)
     self.episode_end_requested = false
     self.bonus_reward = 0
     self.previous_creep_distance = 800
+    self.previous_target_entindex = -1
+    self.previous_target_health_bar = 0
+    self.previous_target_time = self.previous_time
     self.reward_version = "lane_wave_clear_v4_fixed_progression"
 end
 
@@ -67,12 +80,15 @@ function RLPPOBridge:Observation()
     local last_hits = self.episode_last_hits
     local xp = self.hero:GetCurrentXP()
     local distance = math.sqrt(origin.x * origin.x + origin.y * origin.y)
-    local target, enemy_count, ally_count = self:LaneCreepContext()
+    local target, enemy_count, ally_count, nearest_ally, allies = self:LaneCreepContext()
     local target_distance = 800
     local attack_range = math.max(self.hero:Script_GetAttackRange(), 1)
     local damage = 1
     local target_health, target_max_health, target_entindex = 0, 1, -1
-    local creep_dx, creep_dy, creep_distance, creep_health, in_attack_range, last_hit_ready = 0, 0, 0, 0, 0, 0
+    local creep_dx, creep_dy, creep_distance, creep_health_bar = 0, 0, 0, 0
+    local health_loss_rate, hero_damage_fraction, in_attack_range, allied_pressure = 0, 0, 0, 0
+    local ally_dx, ally_dy, ally_distance, ally_health_bar = 0, 0, 0, 0
+    local attack_recovery = 0
     if target ~= nil then
         local delta = target:GetAbsOrigin() - origin
         target_distance = delta:Length2D()
@@ -80,17 +96,46 @@ function RLPPOBridge:Observation()
         target_health = target:GetHealth()
         target_max_health = math.max(target:GetMaxHealth(), 1)
         target_entindex = target:entindex()
-        creep_dx = math.max(-1, math.min(delta.x / 800, 1))
-        creep_dy = math.max(-1, math.min(delta.y / 800, 1))
+        creep_dx = clamp(delta.x / 800, -1, 1)
+        creep_dy = clamp(delta.y / 800, -1, 1)
         creep_distance = math.min(target_distance / 800, 1.5)
-        creep_health = target_health / target_max_health
+        creep_health_bar = health_bar_fraction(target_health, target_max_health)
+        if self.previous_target_entindex == target_entindex then
+            health_loss_rate = clamp((self.previous_target_health_bar - creep_health_bar) /
+                math.max(now - self.previous_target_time, 0.001), -1, 1)
+        end
+        self.previous_target_entindex = target_entindex
+        self.previous_target_health_bar = creep_health_bar
+        self.previous_target_time = now
+        hero_damage_fraction = clamp(damage / target_max_health, 0, 1)
         in_attack_range = target_distance <= attack_range and 1 or 0
-        last_hit_ready = target:GetHealth() <= damage and 1 or 0
+        for _, ally in pairs(allies) do
+            if ally.GetAttackTarget ~= nil and ally:GetAttackTarget() == target then
+                allied_pressure = allied_pressure + 1
+            end
+        end
+        allied_pressure = math.min(allied_pressure / 4, 1)
+    else
+        self.previous_target_entindex = -1
+        self.previous_target_health_bar = 0
+        self.previous_target_time = now
+    end
+    if nearest_ally ~= nil then
+        local ally_delta = nearest_ally:GetAbsOrigin() - origin
+        ally_dx = clamp(ally_delta.x / 800, -1, 1)
+        ally_dy = clamp(ally_delta.y / 800, -1, 1)
+        ally_distance = math.min(ally_delta:Length2D() / 800, 1.5)
+        ally_health_bar = health_bar_fraction(nearest_ally:GetHealth(), nearest_ally:GetMaxHealth())
+    end
+    if self.hero.GetLastAttackTime ~= nil and self.hero.GetSecondsPerAttack ~= nil then
+        local seconds_per_attack = math.max(self.hero:GetSecondsPerAttack(), 0.001)
+        attack_recovery = clamp((self.hero:GetLastAttackTime() + seconds_per_attack - now) / seconds_per_attack, 0, 1)
     end
     local observation = {origin.x / 8192, origin.y / 8192, velocity.x / 550, velocity.y / 550,
         math.max(now, 0) / 3600, gold / 30000, last_hits / 400, xp / 30000, 1, distance / 11585,
-        creep_dx, creep_dy, creep_distance, creep_health, in_attack_range, last_hit_ready,
-        math.min(enemy_count / 4, 1.5), math.min(ally_count / 4, 1.5)}
+        creep_dx, creep_dy, creep_distance, creep_health_bar, health_loss_rate, hero_damage_fraction,
+        in_attack_range, allied_pressure, ally_dx, ally_dy, ally_distance, ally_health_bar,
+        math.min(enemy_count / 4, 1.5), math.min(ally_count / 4, 1.5), attack_recovery}
     if #observation ~= OBSERVATION_DIM then error("RL PPO observation dimension mismatch") end
     local mask = {}
     for index = 1, ACTION_COUNT do mask[index] = false end
@@ -121,7 +166,7 @@ function RLPPOBridge:LaneCreepContext()
         DOTA_UNIT_TARGET_TEAM_ENEMY, DOTA_UNIT_TARGET_BASIC, DOTA_UNIT_TARGET_FLAG_NONE, FIND_CLOSEST, false)
     local ally = FindUnitsInRadius(self.hero:GetTeamNumber(), origin, nil, 800,
         DOTA_UNIT_TARGET_TEAM_FRIENDLY, DOTA_UNIT_TARGET_BASIC, DOTA_UNIT_TARGET_FLAG_NONE, FIND_CLOSEST, false)
-    return enemy[1], #enemy, #ally
+    return enemy[1], #enemy, #ally, ally[1], ally
 end
 
 function RLPPOBridge:Reward()

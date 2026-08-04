@@ -15,8 +15,11 @@ from typing import Any
 
 import numpy as np
 
-from .data import CURRENT_LOCAL_REWARD_VERSION, Rollouts, checkpoint_sha256, load_rollouts, require_current_local_reward_version, merge_rollouts
+from .data import (CURRENT_LOCAL_OBSERVATION_VERSION, CURRENT_LOCAL_REWARD_VERSION, Rollouts,
+                   checkpoint_sha256, load_rollouts, require_current_local_observation_version,
+                   require_current_local_reward_version, merge_rollouts)
 from .evaluation import evaluate_rollouts, rollout_metrics
+from .observations import OBSERVATION_DIM
 from .train import PPOConfig, select_device, train_ppo
 
 
@@ -37,6 +40,7 @@ class SupervisorConfig:
     device: str = "cuda"
     include_existing: bool = False
     required_reward_version: str = CURRENT_LOCAL_REWARD_VERSION
+    required_observation_version: str = CURRENT_LOCAL_OBSERVATION_VERSION
     min_game_seconds: float = 150.0
 
     def validate(self) -> None:
@@ -50,8 +54,8 @@ class SupervisorConfig:
             raise ValueError("max_hours must be positive and poll_seconds cannot be negative")
         if self.min_steps < 1 or self.max_failures < 1 or self.epochs < 1 or self.min_game_seconds <= 0:
             raise ValueError("min_steps, max_failures, epochs, and min_game_seconds must be positive")
-        if not self.required_reward_version:
-            raise ValueError("required_reward_version must be non-empty")
+        if not self.required_reward_version or not self.required_observation_version:
+            raise ValueError("required reward and observation versions must be non-empty")
 
 
 def validate_rollout(path: Path, config: SupervisorConfig) -> tuple[Rollouts | None, dict[str, object]]:
@@ -59,14 +63,19 @@ def validate_rollout(path: Path, config: SupervisorConfig) -> tuple[Rollouts | N
     try:
         rollout = load_rollouts(path)
         metadata = require_current_local_reward_version(path)
+        require_current_local_observation_version(path)
     except (OSError, ValueError, KeyError) as error:
         return None, {"accepted": False, "reason": f"unreadable archive: {error}"}
     if metadata.get("reward_version") != config.required_reward_version:
         return None, {"accepted": False, "reason": f"reward_version is not {config.required_reward_version!r}"}
+    if metadata.get("observation_version") != config.required_observation_version:
+        return None, {"accepted": False, "reason": f"observation_version is not {config.required_observation_version!r}"}
     if metadata.get("policy_checkpoint_sha256") != checkpoint_sha256(config.checkpoint):
         return None, {"accepted": False, "reason": "archive was not sampled by the configured checkpoint"}
     if rollout.source != "local_instrumented_lobby":
         return None, {"accepted": False, "reason": "not an exact local_instrumented_lobby archive"}
+    if rollout.observations.shape[1] != OBSERVATION_DIM:
+        return None, {"accepted": False, "reason": f"observation width is not {OBSERVATION_DIM}"}
     if len(rollout.actions) < config.min_steps:
         return None, {"accepted": False, "reason": f"only {len(rollout.actions)} steps; need {config.min_steps}"}
     if rollout.old_log_probs is None or rollout.old_values is None or rollout.action_masks is None:

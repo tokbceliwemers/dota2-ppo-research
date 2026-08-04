@@ -8,7 +8,7 @@ into that addon's existing mode. Workshop Tools uses this addon layout for
 Start the Python service before launching the local lobby:
 
 ```powershell
-dota-ppo bridge checkpoints\lane_expert_bc_v2.pt --rollouts data\rollouts\batch_0001.npz --human-orders data\human_orders.jsonl
+dota-ppo bridge checkpoints\lane_expert_bc_v3.pt --rollouts data\rollouts\batch_0001.npz --human-orders data\human_orders.jsonl
 ```
 
 The service is bound exclusively to `127.0.0.1:8765`. The Lua reference assumes

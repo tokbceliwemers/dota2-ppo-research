@@ -24,6 +24,7 @@ from .actions import ACTION_NAMES
 from .calibration import validate_event
 from .controls import canonicalize_input
 from .data import Rollouts, checkpoint_sha256, save_rollouts
+from .observations import OBSERVATION_DIM, OBSERVATION_VERSION
 from .train import load_model, select_device
 
 
@@ -45,6 +46,11 @@ class PolicyBridge:
                  calibration_output: Path | None = None) -> None:
         self.device = select_device(device_name)
         self.model = load_model(checkpoint, self.device)
+        if self.model.observation_dim != OBSERVATION_DIM:
+            raise ValueError(
+                f"{checkpoint} uses {self.model.observation_dim} observations; "
+                f"the current {OBSERVATION_VERSION} local bridge requires {OBSERVATION_DIM}"
+            )
         self.policy_checkpoint_sha256 = checkpoint_sha256(checkpoint)
         self.rollout_output = rollout_output
         self.flush_number = 0
@@ -191,7 +197,7 @@ class PolicyBridge:
             output = self._next_rollout_path()
             save_rollouts(output, data, {"checkpoint_action_dim": self.model.action_dim,
                                          "checkpoint_observation_dim": self.model.observation_dim,
-                                         "observation_version": "lane_v2" if self.model.observation_dim == 18 else "legacy",
+                                         "observation_version": OBSERVATION_VERSION,
                                          "bridge": "loopback_http",
                                          "reward_version": next(iter(reward_versions)),
                                          "policy_checkpoint_sha256": self.policy_checkpoint_sha256,

@@ -10,14 +10,16 @@ from dota_ppo.calibration import SCHEMA_VERSION, analyze_events
 from dota_ppo.comparison import compare_rollout_sets
 from dota_ppo.controls import canonicalize_input
 from dota_ppo.curriculum import synthetic_lane_expert
-from dota_ppo.data import CURRENT_LOCAL_REWARD_VERSION, Rollouts, Trajectories, checkpoint_sha256, load_rollout_metadata, load_rollouts, load_trajectories, merge_rollouts, save_rollouts
+from dota_ppo.data import (CURRENT_LOCAL_OBSERVATION_VERSION, CURRENT_LOCAL_REWARD_VERSION,
+                           Rollouts, Trajectories, checkpoint_sha256, load_rollout_metadata,
+                           load_rollouts, load_trajectories, merge_rollouts, save_rollouts)
 from dota_ppo.evaluation import evaluate_rollouts
 from dota_ppo.input_logs import canonicalize_jsonl, join_orders_to_states
 from dota_ppo.replays import build_replay_dataset
 from dota_ppo.train import PPOConfig, behavior_clone, ppo_update, ppo_update_headless_lane
 from dota_ppo.headless_lane import HeadlessLaneConfig, SOURCE as HEADLESS_SOURCE, HeadlessLane, collect_headless_rollout, train_headless_lane
 from dota_ppo.model import ActorCritic
-from dota_ppo.observations import OBSERVATION_DIM
+from dota_ppo.observations import OBSERVATION_DIM, OBSERVATION_VERSION, health_bar_fraction
 from dota_ppo.supervisor import SupervisorConfig, run_supervisor, validate_rollout
 
 
@@ -70,6 +72,14 @@ def test_v4_lane_addon_enforces_fixed_shadow_fiend_progression() -> None:
     assert 'ability:SetLevel(0)' in scenario
     assert 'modifier:SetStackCount(0)' in scenario
     assert 'lane_wave_clear_v4_fixed_progression' in bridge
+    assert 'local OBSERVATION_DIM = 25' in bridge
+    assert 'GetAttackTarget' in bridge
+    assert 'GetLastAttackTime' in bridge
+
+
+def test_health_bar_observation_is_quantized() -> None:
+    bars = health_bar_fraction(np.array([0.0, 0.024, 0.026, 0.99, 1.0], dtype=np.float32))
+    np.testing.assert_allclose(bars, np.array([0.0, 0.0, 0.05, 1.0, 1.0], dtype=np.float32))
 
 
 def test_headless_lane_uses_live_compatible_shapes_and_masks() -> None:
@@ -98,6 +108,7 @@ def test_headless_lane_pretraining_is_separate_from_real_ppo(tmp_path: Path) -> 
     rollout = collect_headless_rollout(model, 16, 8, seed=5)
     assert rollout.source == HEADLESS_SOURCE
     assert len(rollout.actions) == 128
+    assert rollout.dones[-16:].all()
     assert rollout.action_masks[np.arange(len(rollout.actions)), rollout.actions].all()
     ppo_update_headless_lane(rollout, model, torch.device("cpu"), PPOConfig(epochs=1, minibatch_size=32))
     output = tmp_path / "headless.pt"
@@ -156,6 +167,7 @@ def test_bridge_writes_exact_ppo_rollout(tmp_path: Path) -> None:
     assert rollout.action_masks.shape == (1, ACTION_DIM)
     assert rollout.game_times.tolist() == [12.25]
     assert load_rollout_metadata(output)["reward_version"] == "test_v2"
+    assert load_rollout_metadata(output)["observation_version"] == OBSERVATION_VERSION
     assert load_rollout_metadata(output)["policy_checkpoint_sha256"] == checkpoint_sha256(checkpoint)
     assert bridge.health()["action_requests"] == 1
     assert bridge.health()["transition_requests"] == 1
@@ -183,7 +195,9 @@ def test_paired_comparison_requires_exact_comparable_local_evidence(tmp_path: Pa
         rollout = Rollouts(np.zeros((2, OBSERVATION_DIM), np.float32), actions, rewards, np.array([False, True]),
                            "local_instrumented_lobby", np.zeros(2, np.float32), np.zeros(2, np.float32), masks,
                            np.array([0.0, 0.25], np.float32))
-        save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION, "policy_checkpoint_sha256": "same-policy"})
+        save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                      "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
+                                      "policy_checkpoint_sha256": "same-policy"})
     baseline = [tmp_path / f"baseline_{index}.npz" for index in range(3)]
     candidate = [tmp_path / f"candidate_{index}.npz" for index in range(3)]
     for path in baseline: write_rollout(path, reward=0.0, last_hit=False)
@@ -261,6 +275,7 @@ def test_merge_exact_rollouts(tmp_path: Path) -> None:
                            np.array([False, True]), "local_instrumented_lobby", np.zeros(2, np.float32),
                            np.zeros(2, np.float32), np.ones((2, ACTION_DIM), dtype=bool), np.array([index, index + 0.25], np.float32))
         save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                      "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                       "policy_checkpoint_sha256": "same-policy"})
         paths.append(path)
     output = tmp_path / "merged.npz"
@@ -285,12 +300,28 @@ def test_merge_rejects_an_archive_from_another_reward_version(tmp_path: Path) ->
         raise AssertionError("merge accepted a different reward version")
 
 
+def test_merge_rejects_an_archive_from_another_observation_version(tmp_path: Path) -> None:
+    path = tmp_path / "old_observation.npz"
+    rollout = Rollouts(np.zeros((2, OBSERVATION_DIM), np.float32), np.array([0, 1]), np.ones(2, np.float32),
+                       np.array([False, True]), "local_instrumented_lobby", np.zeros(2, np.float32),
+                       np.zeros(2, np.float32), np.ones((2, ACTION_DIM), dtype=bool), np.array([0.0, 0.25], np.float32))
+    save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                  "observation_version": "lane_v2", "policy_checkpoint_sha256": "same-policy"})
+    try:
+        merge_rollouts([path], tmp_path / "merged.npz")
+    except ValueError as error:
+        assert "observation_version" in str(error)
+    else:
+        raise AssertionError("merge accepted a different observation contract")
+
+
 def test_merge_rejects_a_rollout_that_ends_mid_episode(tmp_path: Path) -> None:
     path = tmp_path / "partial.npz"
     rollout = Rollouts(np.zeros((2, OBSERVATION_DIM), np.float32), np.array([0, 1]), np.ones(2, np.float32),
                        np.array([True, False]), "local_instrumented_lobby", np.zeros(2, np.float32),
                        np.zeros(2, np.float32), np.ones((2, ACTION_DIM), dtype=bool), np.array([0.0, 0.25], np.float32))
     save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                  "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                   "policy_checkpoint_sha256": "same-policy"})
     try:
         merge_rollouts([path], tmp_path / "merged.npz")
@@ -346,6 +377,7 @@ def test_supervisor_rejects_low_cadence_rollout(tmp_path: Path) -> None:
                        np.array([False] * 7 + [True]), "local_instrumented_lobby", np.zeros(8, np.float32),
                        np.zeros(8, np.float32), np.ones((8, ACTION_DIM), dtype=bool), np.arange(8, dtype=np.float32) * 2)
     save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                  "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                   "policy_checkpoint_sha256": checkpoint_sha256(checkpoint)})
     config = SupervisorConfig(tmp_path, checkpoint, tmp_path / "run", min_steps=8, min_decisions_per_game_second=3,
                               min_game_seconds=0.2)
@@ -376,6 +408,7 @@ def test_supervisor_rejects_another_policy_checkpoint(tmp_path: Path) -> None:
                        np.array([False] * 7 + [True]), "local_instrumented_lobby", np.zeros(8, np.float32),
                        np.zeros(8, np.float32), np.ones((8, ACTION_DIM), dtype=bool), np.arange(8, dtype=np.float32) * .25)
     save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                  "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                   "policy_checkpoint_sha256": "not-the-configured-checkpoint"})
     config = SupervisorConfig(tmp_path, checkpoint, tmp_path / "run", min_steps=8, min_game_seconds=0.2)
     accepted, result = validate_rollout(path, config)
@@ -392,6 +425,7 @@ def test_supervisor_evaluates_and_trains_one_valid_batch(tmp_path: Path) -> None
                        np.array([False] * 7 + [True]), "local_instrumented_lobby", np.zeros(8, np.float32),
                        np.zeros(8, np.float32), np.ones((8, ACTION_DIM), dtype=bool), np.arange(8, dtype=np.float32) * 0.25)
     save_rollouts(path, rollout, {"reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                  "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                   "policy_checkpoint_sha256": checkpoint_sha256(checkpoint)})
     run_dir = tmp_path / "run"
     config = SupervisorConfig(rollout_dir, checkpoint, run_dir, batch_archives=1, max_batches=1, max_hours=1,

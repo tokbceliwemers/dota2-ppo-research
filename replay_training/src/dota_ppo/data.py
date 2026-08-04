@@ -9,8 +9,11 @@ from pathlib import Path
 
 import numpy as np
 
+from .observations import OBSERVATION_DIM
+
 
 CURRENT_LOCAL_REWARD_VERSION = "lane_wave_clear_v4_fixed_progression"
+CURRENT_LOCAL_OBSERVATION_VERSION = "lane_v3"
 
 
 def checkpoint_sha256(path: Path) -> str:
@@ -161,6 +164,17 @@ def require_current_local_reward_version(path: Path) -> dict[str, object]:
     return metadata
 
 
+def require_current_local_observation_version(path: Path) -> dict[str, object]:
+    """Reject archives collected under a different live observation contract."""
+    metadata = load_rollout_metadata(path)
+    actual = metadata.get("observation_version", "unspecified")
+    if actual != CURRENT_LOCAL_OBSERVATION_VERSION:
+        raise ValueError(
+            f"{path} has observation_version {actual!r}; expected {CURRENT_LOCAL_OBSERVATION_VERSION!r}"
+        )
+    return metadata
+
+
 def require_policy_checkpoint(path: Path, checkpoint: Path) -> dict[str, object]:
     """Require that an archive was sampled by exactly the checkpoint supplied."""
     metadata = load_rollout_metadata(path)
@@ -176,12 +190,18 @@ def merge_rollouts(paths: list[Path], output: Path) -> dict[str, object]:
     if not paths:
         raise ValueError("supply at least one rollout archive")
     metadata = [require_current_local_reward_version(path) for path in paths]
+    for path in paths:
+        require_current_local_observation_version(path)
     checkpoint_hashes = {item.get("policy_checkpoint_sha256") for item in metadata}
     if None in checkpoint_hashes or len(checkpoint_hashes) != 1:
         raise ValueError("PPO merge requires archives from one identified policy checkpoint")
     batches = [load_rollouts(path) for path in paths]
     first = batches[0]
     observation_dim = first.observations.shape[1]
+    if observation_dim != OBSERVATION_DIM:
+        raise ValueError(
+            f"{paths[0]} has observation width {observation_dim}; expected current width {OBSERVATION_DIM}"
+        )
     mask_shape = None if first.action_masks is None else first.action_masks.shape[1]
     for path, batch in zip(paths, batches):
         if batch.source != "local_instrumented_lobby":
@@ -209,5 +229,6 @@ def merge_rollouts(paths: list[Path], output: Path) -> dict[str, object]:
     )
     save_rollouts(output, merged, {"merged_from": [str(path) for path in paths], "archives": len(paths),
                                    "reward_version": CURRENT_LOCAL_REWARD_VERSION,
+                                   "observation_version": CURRENT_LOCAL_OBSERVATION_VERSION,
                                    "policy_checkpoint_sha256": next(iter(checkpoint_hashes))})
     return {"archives": len(paths), "steps": len(merged.observations), "terminal_steps": int(merged.dones.sum()), "output": str(output)}

@@ -13,7 +13,7 @@ Use this workflow instead:
 4. Run `dota-ppo compare-rollouts` for evaluation, or `dota-ppo supervise`
    only after the project plan's Stage 2 gate has been met.
 
-The supervisor accepts only `lane_wave_clear_v4_fixed_progression` archives
+The supervisor accepts only `lane_wave_clear_v4_fixed_progression` / `lane_v3` archives
 from the exact checkpoint it was given, spanning at least 150 game seconds,
 ending on a terminal transition, with valid masks and adequate decision
 cadence.

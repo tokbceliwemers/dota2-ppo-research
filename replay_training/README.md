@@ -43,7 +43,7 @@ dota-ppo dataset data\parsed --hero nevermore --output data\replay_bootstrap.npz
 dota-ppo bc data\replay_bootstrap.npz --output checkpoints\nevermore_bc.pt --epochs 50
 ```
 
-## Fast lane-v2 warm start
+## Fast lane-v3 warm start
 
 The real Dota client remains the source of exact PPO trajectories and runs at
 real time. To avoid spending those runs teaching the policy the obvious
@@ -52,14 +52,16 @@ and behavior-clone it first. This data is explicitly not accepted by the PPO
 command.
 
 ```powershell
-dota-ppo synthetic-lane-data --output data/synthetic_lane_v2.npz --steps 100000
-dota-ppo bc data/synthetic_lane_v2.npz --output checkpoints/lane_expert_bc_v2.pt --epochs 30
+dota-ppo synthetic-lane-data --output data/synthetic_lane_v3.npz --steps 100000
+dota-ppo bc data/synthetic_lane_v3.npz --output checkpoints/lane_expert_bc_v3.pt --epochs 30
 ```
 
-`lane_expert_bc_v2.pt` uses the 18-feature lane-v2 contract: hero features
-plus nearest-creep direction/distance, health, attack/last-hit readiness, and
-local creep counts. Use it only as the warm start for subsequent exact local
-PPO collection.
+`lane_expert_bc_v3.pt` uses the 25-feature lane-v3 contract: hero features,
+nearest-creep geometry, a quantized visible health bar and its recent change,
+hero damage/range/recovery, allied-creep pressure, nearest allied-creep
+geometry/health, and local creep counts. It deliberately does not contain an
+exact last-hit-ready feature. Use it only as the warm start for subsequent
+exact local PPO collection.
 
 The dataset sidecar, `data/replay_bootstrap.json`, records the source matches,
 feature width, and the approximation warning. Re-run parsing only when needed:
@@ -120,7 +122,7 @@ these arrays after each policy batch:
 
 | Array | Shape | Meaning |
 | --- | --- | --- |
-| `observations` | `[T, 18]` | 10 hero features plus 8 lane-v2 creep features, exactly as sent to the model |
+| `observations` | `[T, 25]` | 10 hero features plus 15 lane-v3 target/ally/timing features, exactly as sent to the model |
 | `actions` | `[T]` | Actions sampled from the current policy |
 | `rewards` | `[T]` | Environment reward (not replay heuristic) |
 | `dones` | `[T]` | True when a game/episode ends |
@@ -128,7 +130,7 @@ these arrays after each policy batch:
 | `old_values` | `[T]` | Value estimate when the action was sampled |
 | `action_masks` | `[T, 24]` optional | Valid actions at each step |
 | `game_times` | `[T]` optional | Dota game-time when each action was sampled; used to verify collection throughput |
-| `metadata` | scalar JSON | Must contain `{"source":"local_instrumented_lobby"}` |
+| `metadata` | scalar JSON | Must contain source, reward version, observation version, and policy checkpoint SHA-256 |
 
 Use the exact same observation encoder and action mask in the adapter and
 trainer. A simple reward could combine team net-worth change, objectives, tower
@@ -204,7 +206,7 @@ Compare `reward_per_step`, `mean_archive_episode_reward`,
 a checkpoint only when the PPO set improves across repeated local runs, not
 because of one unusually good rollout.
 
-New lane-v2 archives also report `decisions_per_game_second` and decision-gap
+New lane-v3 archives also report `decisions_per_game_second` and decision-gap
 metrics. At the 0.25 game-second cadence, a healthy collector is close to four
 decisions per game-second. Check this after using `rl_ppo_speed_4`: game speed
 may reduce wall-clock collection time, but it must not reduce game-time decision
@@ -220,7 +222,7 @@ dota-ppo serve deploy\nevermore_policy.ts --device cuda
 `serve` speaks newline-delimited JSON on stdin/stdout:
 
 ```json
-{"observation":[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0]}
+{"observation":[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 ```
 
 It responds with an action index and name. A Dota 2 Lua bot script cannot load

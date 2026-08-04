@@ -1,7 +1,7 @@
 # Headless lane PPO pretraining
 
 `headless-lane-ppo` is a fast, non-rendered approximation used to initialise
-the lane-v2 policy. It has no Dota process, network, VConsole, mouse, keyboard,
+the lane-v3 policy. It has no Dota process, network, VConsole, mouse, keyboard,
 or UI dependency.
 
 It is **not** a Dota substitute. The simulator checkpoint is marked
@@ -11,8 +11,8 @@ evaluated through the local instrumented lobby before any promotion.
 ```powershell
 Set-Location C:\Users\skaya\Desktop\dota2\replay_training
 dota-ppo headless-lane-ppo `
-  --checkpoint checkpoints\lane_expert_bc_v2.pt `
-  --output checkpoints\headless_lane_pretrained.pt `
+  --checkpoint checkpoints\lane_expert_bc_v3.pt `
+  --output checkpoints\headless_lane_context_v3.pt `
   --calibration-report data\calibration\lane_001_report.json `
   --updates 16 --environments 1024 --horizon 96 --epochs 4 --device cuda
 ```

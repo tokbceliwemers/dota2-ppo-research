@@ -10,7 +10,7 @@ archives. It does not launch Dota, interact with its UI, or train a PPO model.
 
    ```powershell
    Set-Location C:\Users\skaya\Desktop\dota2\replay_training
-   dota-ppo bridge checkpoints\lane_expert_bc_v2.pt `
+   dota-ppo bridge checkpoints\lane_expert_bc_v3.pt `
      --rollouts data\rollouts\calibration_001.npz `
      --calibration data\calibration\lane_001.jsonl `
      --device cuda

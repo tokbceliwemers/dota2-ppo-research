@@ -13,6 +13,7 @@ from torch.nn import functional as F
 
 from .data import Rollouts, Trajectories
 from .model import ActorCritic
+from .observations import OBSERVATION_VERSION
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,10 @@ def behavior_clone(data: Trajectories, action_dim: int, device: torch.device, ou
             loss = F.cross_entropy(logits, actions[indexes])
             optimizer.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); optimizer.step()
             losses.append(float(loss.detach().cpu()))
-    _checkpoint(output, model, optimizer, {"algorithm": "behavior_cloning", "source": data.source, "epochs": epochs})
+    _checkpoint(output, model, optimizer, {
+        "algorithm": "behavior_cloning", "source": data.source, "epochs": epochs,
+        "observation_version": OBSERVATION_VERSION,
+    })
     return {"loss": float(np.mean(losses[-max(1, len(losses)//10):])), "steps": float(len(data.observations)), "device": str(device)}
 
 

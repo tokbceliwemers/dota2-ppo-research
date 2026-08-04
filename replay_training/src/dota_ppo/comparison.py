@@ -29,6 +29,8 @@ def _quality_failures(report: dict[str, object], minimum_archives: int,
         failures.append("has no decision cadence")
     if len(aggregate["reward_versions"]) != 1:
         failures.append("archives use more than one reward_version")
+    if len(aggregate["observation_versions"]) != 1 or aggregate["observation_versions"] == ["unspecified"]:
+        failures.append("archives use more than one identified observation_version")
     if len(aggregate["policy_checkpoint_sha256s"]) != 1 or aggregate["policy_checkpoint_sha256s"] == ["unspecified"]:
         failures.append("archives are not all identified as one policy checkpoint")
     short_archives = [
@@ -65,6 +67,8 @@ def compare_rollout_sets(baseline_paths: list[Path], candidate_paths: list[Path]
     candidate_cadence = cand["decisions_per_game_second"]
     if base["reward_versions"] != cand["reward_versions"]:
         candidate_quality.append("candidate and baseline use different reward_version values")
+    if base["observation_versions"] != cand["observation_versions"]:
+        candidate_quality.append("candidate and baseline use different observation_version values")
     cadence_ratio: float | None = None
     if base_cadence is not None and candidate_cadence is not None and float(base_cadence) > 0:
         cadence_ratio = float(candidate_cadence) / float(base_cadence)

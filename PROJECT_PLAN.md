@@ -31,8 +31,12 @@ repeatable last-hit improvement in one controlled lane drill.
 
 ### Current lane curriculum: `lane_wave_clear_v4_fixed_progression`
 
-- Observation contract: `lane-v2`, 18 features and 24 action IDs; ability and
-  item actions remain masked.
+- Observation contract: `lane-v3`, 25 features and 24 action IDs; ability and
+  item actions remain masked. It gives a target-relative, 20-segment health-bar
+  value (not exact hit points), recent health-bar loss rate, normalized hero
+  attack damage, attack range/recovery, allied creeps attacking the target, and
+  nearest allied-creep geometry/health. The policy must infer last-hit timing
+  from those visible cues rather than receiving a `last_hit_ready` oracle.
 - Reward: `+1` for a hero last hit, `-2` for hero death, approach shaping, and
   a small terminal last-hit bonus.
 - Terminal conditions: hero death, 75-second fallback limit, or the four
@@ -44,8 +48,9 @@ repeatable last-hit improvement in one controlled lane drill.
   Necromastery level/stacks for every wave, keeping the micro-curriculum
   stationary instead of making later waves easier.
 - Every new archive records `reward_version:
-  lane_wave_clear_v4_fixed_progression`. Older archives are not comparable
-  with, or training data for, this curriculum.
+  lane_wave_clear_v4_fixed_progression` and `observation_version: lane_v3`.
+  Older archives are not comparable with, or training data for, this
+  curriculum.
 
 ### Verified evidence
 
@@ -74,20 +79,18 @@ repeatable last-hit improvement in one controlled lane drill.
   reward per step was `-0.01067` versus the baseline's `-0.00890`, it produced
   6 versus 9 last-hit signals, and both had 13 death signals. It is not
   eligible for real-Dota PPO promotion.
+- The `lane_v3` 25-feature observation contract is implemented in the local
+  bridge and the separate headless pretrainer. Fresh `lane_expert_bc_v3.pt`
+  and calibration-informed `headless_lane_context_v3.pt` checkpoints exist;
+  neither has yet been tested in a local-Dota `lane_v3` archive.
 
 ### Immediate next action
 
-1. Design and implement a new, versioned local observation contract before
-   another candidate comparison. `lane-v2` exposes only the nearest enemy
-   creep's relative geometry and ally/enemy counts; it does not expose an ally
-   creep's position or health. Add stable, target-relative allied-wave context
-   and relevant attack-timing state to the local addon and headless simulator
-   in lockstep. Record and validate the observation version so different state
-   contracts cannot be merged or compared.
-2. Create fresh baseline and candidate checkpoints for that new contract, then
+1. Start a fresh local lobby/bridge using the prepared `lane-v3` checkpoints,
+   verify it produces a 25-feature archive without bridge errors, then
    collect three complete normal-speed archives per policy. Compare only equal
    reward and observation versions with `dota-ppo compare-rollouts`.
-3. Only after repeatable local improvement, collect fresh on-policy data from
+2. Only after repeatable local improvement, collect fresh on-policy data from
    the chosen policy and run one PPO update. Archive the data, report, reward
    version, observation version, and resulting checkpoint together.
 

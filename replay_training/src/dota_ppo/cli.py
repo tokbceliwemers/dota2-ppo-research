@@ -10,7 +10,9 @@ from .bridge import serve_bridge
 from .calibration import analyze_events
 from .comparison import compare_rollout_sets
 from .curriculum import build_synthetic_lane_expert
-from .data import load_rollouts, load_trajectories, merge_rollouts, require_current_local_reward_version, require_policy_checkpoint
+from .data import (load_rollouts, load_trajectories, merge_rollouts,
+                   require_current_local_observation_version, require_current_local_reward_version,
+                   require_policy_checkpoint)
 from .evaluation import evaluate_rollouts
 from .export import export_torchscript, serve
 from .input_logs import canonicalize_jsonl, join_orders_to_states
@@ -90,6 +92,7 @@ def main() -> int:
     elif args.command == "ppo":
         config = PPOConfig(epochs=args.epochs)
         require_current_local_reward_version(args.rollouts)
+        require_current_local_observation_version(args.rollouts)
         require_policy_checkpoint(args.rollouts, args.checkpoint)
         print(train_ppo(load_rollouts(args.rollouts), args.checkpoint, args.output, select_device(args.device), config))
     elif args.command == "headless-lane-ppo":

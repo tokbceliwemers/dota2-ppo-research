@@ -71,6 +71,7 @@ def evaluate_rollouts(paths: list[Path], output: Path | None = None) -> dict[str
             raise ValueError(f"{path} is not a local instrumented-lobby rollout")
         metadata = load_rollout_metadata(path)
         reports.append({"rollout": str(path), "reward_version": str(metadata.get("reward_version", "unspecified")),
+                        "observation_version": str(metadata.get("observation_version", "unspecified")),
                         "policy_checkpoint_sha256": str(metadata.get("policy_checkpoint_sha256", "unspecified")),
                         **rollout_metrics(rollout)})
     total_steps = sum(int(report["steps"]) for report in reports)
@@ -99,6 +100,7 @@ def evaluate_rollouts(paths: list[Path], output: Path | None = None) -> dict[str
             "game_time_span": timed_span if timed_reports else None,
             "decisions_per_game_second": timed_steps / timed_span if timed_span > 0 else None,
             "reward_versions": sorted({str(report["reward_version"]) for report in reports}),
+            "observation_versions": sorted({str(report["observation_version"]) for report in reports}),
             "policy_checkpoint_sha256s": sorted({str(report["policy_checkpoint_sha256"]) for report in reports}),
         },
         "rollouts": reports,
