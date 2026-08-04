@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dota-replay-rl"
+version = "0.1.0"
+description = "Replay acquisition and dataset preparation for offline Dota 2 bot research"
+requires-python = ">=3.10"
+dependencies = [
+  "gem-dota>=0.3.0",
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "pyarrow>=14",
+  "requests>=2.31",
+  "zstandard>=0.22",
+]
+
+[project.scripts]
+dota-replays = "dota_replay_rl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

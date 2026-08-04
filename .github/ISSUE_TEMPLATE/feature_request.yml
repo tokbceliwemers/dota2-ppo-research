@@ -1,0 +1,26 @@
+name: Research improvement
+description: Suggest a bounded, local-only improvement to the research workflow.
+title: "[Research]: "
+labels: [research]
+body:
+  - type: markdown
+    attributes:
+      value: "Suggestions must remain local-only and must not add public-match automation, UI automation, binary modification, or protocol injection."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or evidence gap
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: How it could be validated
+    validations:
+      required: true

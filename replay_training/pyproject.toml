@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dota-replay-training"
+version = "0.1.0"
+description = "CUDA PyTorch offline bootstrap and on-policy PPO for local Dota 2 bot research"
+requires-python = ">=3.10"
+dependencies = [
+  "gem-dota>=0.5.0",
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "pyarrow>=14",
+  "torch>=2.3",
+]
+
+[project.scripts]
+dota-ppo = "dota_ppo.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
