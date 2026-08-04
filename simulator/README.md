@@ -1,8 +1,8 @@
 # Deterministic Dota lane simulator
 
-This folder contains a fast, non-rendered **approximation** for the Shadow
-Fiend lane/last-hit curriculum. It is independent of the Dota client: it does
-not load, patch, inject into, control, or connect to `server.dll`.
+This folder contains fast, non-rendered **approximations** for the Shadow Fiend
+lane/last-hit curriculum. It is independent of the Dota client: it does not
+load, patch, inject into, control, or connect to `server.dll`.
 
 ## What static IDA analysis contributed
 
@@ -29,8 +29,29 @@ python -m unittest -v
 python benchmark.py --environments 4096 --steps 1000
 ```
 
-`lane_simulator.py` uses the same 18-value observation contract and 24-action
-vocabulary as `replay_training`, while masking unsupported ability/item actions.
+`lane_simulator.py` is the original small vectorized reference.  The new
+`dota_lane_env.py` provides the normal Gymnasium API for individual episodes:
+
+```python
+from dota_lane_env import DotaTerrainLaneEnv
+
+env = DotaTerrainLaneEnv()
+observation, info = env.reset(seed=7)
+observation, reward, terminated, truncated, info = env.step(9)  # attack
+```
+
+`DotaTerrainLaneEnv` uses `data/dota_heightmap.npy` plus its metadata for
+bilinear ground height, slope-gated movement, map bounds, and height-aware
+terrain context. It models one 4-creep wave and supplies a 24-action mask;
+unsupported ability and item actions remain masked. Its 25-value
+`terrain_lane_v1` observation exposes the target's 20-segment health bar and
+loss rate, never exact target health.
+
+The heightmap is **not** the original Dota navigation mesh, so this does not
+claim exact walkability or server physics. The Gym environment has a separate
+observation version and its episodes must not be written as
+`local_instrumented_lobby` PPO data. Use it for fast offline pretraining, then
+validate candidates in the human-started local custom lobby.
 
 ## Calibrate from local Dota
 

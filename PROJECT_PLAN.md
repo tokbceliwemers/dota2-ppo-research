@@ -111,6 +111,15 @@ data. Its checkpoints carry `source: headless_lane_simulator` and
 `real_dota_verified: false`; normal `dota-ppo ppo` accepts only
 `local_instrumented_lobby` archives.
 
+`simulator/dota_lane_env.py` is a separate, single-environment Gymnasium
+reference for terrain-aware offline experiments. It reads
+`simulator/data/dota_heightmap.npy` with its recorded map bounds and raw-height
+range; movement is bounded and slope-gated, and observations contain ground
+height/slope context plus a quantized creep health bar. The heightfield is not
+the original navigation mesh and the environment's `terrain_lane_v1` data is
+not interchangeable with `lane_v3` local-Dota rollouts. Its only valid role is
+to test environment logic or initialize a candidate before local evaluation.
+
 Use the local calibration report only for directly measured simulator fields.
 Attack buffer and attack cooldown remain explicit defaults until a controlled
 local measurement exists. See `replay_training/LANE_CALIBRATION.md` and
