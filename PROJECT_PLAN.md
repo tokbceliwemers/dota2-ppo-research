@@ -117,10 +117,16 @@ reference for terrain-aware offline experiments. It reads
 range; movement is bounded and slope-gated, and observations contain ground
 height/slope context plus a quantized creep health bar. It now also consumes
 the original static `dota.gnv` GridNav file (64-unit cells, conservative
-walkability bit) for spawn and movement constraints. GridNav is not a full
-server-physics model and the environment's `terrain_lane_v1` data is not
-interchangeable with `lane_v3` local-Dota rollouts. Its only valid role is to
-test environment logic or initialize a candidate before local evaluation.
+walkability bit) for spawn and movement constraints. Its narrow 3-melee +
+1-ranged creep wave also consumes exported Source 2 NPC definitions for static
+health, regeneration, movement, range, damage, and attack-period values.
+GridNav and static values are not a full server-physics model and the
+environment shares the live `lane_v3` observation layout but remains an
+approximate data source, not local-Dota rollouts. Its only valid role is to
+test environment logic or initialize a candidate before local evaluation. Its
+masked PPO runner is `simulator/terrain_ppo.py`; it writes a checkpoint with
+`source: terrain_headless_gymnasium` and `real_dota_verified: false`, never a
+PPO rollout archive.
 
 Use the local calibration report only for directly measured simulator fields.
 Attack buffer and attack cooldown remain explicit defaults until a controlled

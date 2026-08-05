@@ -46,8 +46,38 @@ terrain context. When present, it also reads the original static
 `data/dota.gnv` GridNav asset and requires its walkability bit for every spawn
 and movement segment. It models one 4-creep wave and supplies a 24-action mask;
 unsupported ability and item actions remain masked. Its 25-value
-`terrain_lane_v1` observation exposes the target's 20-segment health bar and
-loss rate, never exact target health.
+`lane_v3` observation matches the local bridge layout, exposes the target's
+20-segment health bar and loss rate, and never exact target health.
+
+When `data/npc_data.json` is available, the wave is sourced from the exported
+Source 2 NPC definitions: three 550-health melee creeps and one 300-health
+ranged creep per side, with their recorded regeneration, attack damage,
+attack period, range, and movement speed. Creep combat is deterministic and
+non-rendered. Projectile travel, aggro switching, armour, abilities, and other
+server modifiers remain deliberately out of scope until measured locally.
+
+The matching observation layout means a terrain-pretrained policy checkpoint
+may be tried in the local bridge, but the source remains
+`terrain_headless_gymnasium`; it is never local-Dota PPO evidence and must pass
+the normal local A/B evaluation before it is kept.
+
+## PPO pretraining
+
+`terrain_ppo.py` collects Gymnasium trajectories and performs masked PPO while
+keeping its source separate from local rollouts. For a short smoke run:
+
+```powershell
+python terrain_ppo.py `
+  --checkpoint ..\replay_training\checkpoints\lane_expert_bc_v3.pt `
+  --output ..\replay_training\checkpoints\terrain_gym_candidate.pt `
+  --updates 4 --environments 16 --horizon 96 --epochs 4 --device cuda
+```
+
+The environment itself is CPU-based because it evaluates the real heightmap
+and GridNav. For maximum bulk throughput, the existing CUDA-only
+`dota-ppo headless-lane-ppo` approximation remains the faster initializer.
+The next required step for either candidate is the normal human-started local
+bridge evaluation—not `dota-ppo ppo` on synthetic data.
 
 The heightmap is **not** the original Dota navigation mesh. `dota.gnv` improves
 static walkability constraints but is a grid rather than a full server-physics

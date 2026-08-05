@@ -9,6 +9,7 @@ from gymnasium.utils.env_checker import check_env
 
 from dota_lane_env import ACTION_DIM, ATTACK_ACTION, OBSERVATION_DIM, DotaTerrainLaneEnv, TerrainLaneConfig
 from grid_nav import GridNavigation
+from npc_stats import LaneUnitDefinitions
 from terrain import TerrainHeightmap
 
 
@@ -53,6 +54,25 @@ class GridNavigationTest(unittest.TestCase):
             self.assertFalse(bool(nav.is_walkable(np.array((100.0, 100.0)))))
 
 
+class SourceUnitDefinitionsTest(unittest.TestCase):
+    def test_minimal_exported_npc_data_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            unit = {"StatusHealth": "550", "StatusHealthRegen": "0.5", "AttackDamageMin": "19",
+                    "AttackDamageMax": "23", "AttackRate": "1", "AttackRange": "100", "MovementSpeed": "325"}
+            ranged = {**unit, "StatusHealth": "300", "StatusHealthRegen": "2", "AttackDamageMin": "21",
+                      "AttackDamageMax": "26", "AttackRange": "500"}
+            (directory / "npc_data.json").write_text(json.dumps({"units": {"npc_units.txt": {"DOTAUnits": {
+                "npc_dota_creep_goodguys_melee": unit, "npc_dota_creep_goodguys_ranged": ranged,
+            }}}}), encoding="utf-8")
+            definitions = LaneUnitDefinitions.from_data_directory(directory)
+            health, _, damage, _, attack_range = definitions.wave()
+            self.assertEqual(definitions.source, "source2_npc_units")
+            self.assertTrue(np.array_equal(health, np.array((550, 550, 550, 300), dtype=np.float32)))
+            self.assertTrue(np.array_equal(damage, np.array((21, 21, 21, 23.5), dtype=np.float32)))
+            self.assertTrue(np.array_equal(attack_range, np.array((100, 100, 100, 500), dtype=np.float32)))
+
+
 class DotaTerrainLaneEnvTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -74,6 +94,7 @@ class DotaTerrainLaneEnvTest(unittest.TestCase):
         self.assertTrue(first.observation_space.contains(observation))
         self.assertTrue(np.array_equal(observation, other))
         self.assertEqual(info["action_mask"].shape, (ACTION_DIM,))
+        self.assertEqual(info["unit_definitions"], "builtin_fallback")
         self.assertIsInstance(first, gym.Env)
         check_env(DotaTerrainLaneEnv(self.directory, self.config), skip_render_check=True)
 
@@ -85,7 +106,7 @@ class DotaTerrainLaneEnvTest(unittest.TestCase):
         before = env.enemy_hp.copy()
         observation, reward, _, _, info = env.step(ATTACK_ACTION)
         self.assertLessEqual(float(env.enemy_hp.sum()), float(before.sum()))  # allied pressure only
-        self.assertFalse(bool(info["action_mask"][ATTACK_ACTION]))
+        self.assertTrue(bool(info["action_mask"][ATTACK_ACTION]))
         self.assertLess(reward, 0.0)
         self.assertIn(observation[13], np.arange(21, dtype=np.float32) / 20.0)
 

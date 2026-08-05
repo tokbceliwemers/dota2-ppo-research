@@ -16,6 +16,7 @@ import numpy as np
 from gymnasium import spaces
 
 from grid_nav import GridNavigation
+from npc_stats import LaneUnitDefinitions
 from terrain import TerrainHeightmap
 
 
@@ -64,7 +65,10 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
 
     metadata = {"render_modes": ["ansi"], "render_fps": 4}
     source = "terrain_headless_gymnasium"
-    observation_version = "terrain_lane_v1"
+    # Same visible feature layout as the live local-lobby lane-v3 bridge.
+    # The *dynamics* remain approximate and its checkpoints must still be
+    # validated locally before promotion.
+    observation_version = "lane_v3"
 
     def __init__(self, data_directory: Path | str = Path(__file__).with_name("data"),
                  config: TerrainLaneConfig = TerrainLaneConfig(), render_mode: str | None = None) -> None:
@@ -72,20 +76,35 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
         if render_mode not in (None, "ansi"):
             raise ValueError("only non-graphical ansi rendering is supported")
         self.terrain = TerrainHeightmap.from_data_directory(Path(data_directory))
+        self.unit_definitions = LaneUnitDefinitions.from_data_directory(Path(data_directory))
         nav_path = Path(data_directory) / "dota.gnv"
         self.navigation = GridNavigation.from_file(nav_path) if nav_path.exists() else None
         self.config, self.render_mode = config, render_mode
         self.action_space = spaces.Discrete(ACTION_DIM)
         self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(OBSERVATION_DIM,), dtype=np.float32)
         self.hero_xy = np.zeros(2, dtype=np.float32)
+        self.hero_velocity = np.zeros(2, dtype=np.float32)
         self.hero_hp = np.float32(1.0)
         self.enemy_xy = np.zeros((4, 2), dtype=np.float32)
         self.enemy_hp = np.zeros(4, dtype=np.float32)
+        self.enemy_max_health = np.full(4, config.creep_max_health, dtype=np.float32)
+        self.enemy_health_regen = np.zeros(4, dtype=np.float32)
+        self.enemy_attack_damage = np.zeros(4, dtype=np.float32)
+        self.enemy_attack_rate = np.ones(4, dtype=np.float32)
+        self.enemy_attack_range = np.zeros(4, dtype=np.float32)
+        self.enemy_attack_ready = np.zeros(4, dtype=np.float32)
         self.ally_xy = np.zeros((4, 2), dtype=np.float32)
         self.ally_hp = np.zeros(4, dtype=np.float32)
+        self.ally_max_health = np.full(4, config.creep_max_health, dtype=np.float32)
+        self.ally_health_regen = np.zeros(4, dtype=np.float32)
+        self.ally_attack_damage = np.zeros(4, dtype=np.float32)
+        self.ally_attack_rate = np.ones(4, dtype=np.float32)
+        self.ally_attack_range = np.zeros(4, dtype=np.float32)
+        self.ally_attack_ready = np.zeros(4, dtype=np.float32)
         self.previous_target_hp = np.float32(1.0)
         self.attack_ready_at = np.float32(0.0)
         self.elapsed, self.step_count = np.float32(0.0), 0
+        self.gold, self.last_hits, self.xp = np.float32(0.0), 0, np.float32(0.0)
         self._target_index = 0
         self._spawn_cells = self._build_spawn_cells()
 
@@ -144,9 +163,15 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
 
     def action_mask(self) -> np.ndarray:
         mask = np.zeros(ACTION_DIM, dtype=bool)
-        mask[:10] = True
+        mask[0] = True  # idle
         if (self.enemy_hp > 0).any():
-            mask[ATTACK_ACTION] = self._target_distance(self._target()) <= self.config.hero_attack_range
+            # Match the controlled local bridge's curriculum guardrail: explore
+            # toward the selected creep and allow an attack order for it.
+            delta = self.enemy_xy[self._target()] - self.hero_xy
+            mask[1:9] = (_DIRECTIONS[1:] @ delta) >= 0.0
+            mask[ATTACK_ACTION] = True
+        else:
+            mask[1:9] = True
         return mask
 
     def _observation(self) -> np.ndarray:
@@ -162,34 +187,32 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
             nearest_ally = int(np.argmin(np.where(alive_ally, ally_distances, np.inf)))
         ally_delta = self.ally_xy[nearest_ally] - self.hero_xy
         ally_distance = float(np.linalg.norm(ally_delta))
-        target_hp = self.enemy_hp[target] / self.config.creep_max_health
-        height_span = max(self.terrain.raw_height_span, 1.0)
-        terrain_height = float(self.terrain.height(self.hero_xy))
+        target_hp = self.enemy_hp[target] / max(self.enemy_max_health[target], 1.0)
         result = np.zeros(OBSERVATION_DIM, dtype=np.float32)
-        # Base: map-relative pose and coarse terrain/context.  No exact enemy HP.
-        result[0:2] = self.hero_xy / max(abs(self.terrain.map_min), abs(self.terrain.map_max))
-        result[2] = np.clip((terrain_height - self.terrain.raw_height_min) / height_span, 0.0, 1.0)
-        result[3] = np.clip(float(self.terrain.slope(self.hero_xy)) / self.config.max_ground_slope, 0.0, 1.0)
-        result[4] = self.step_count / float(self.config.horizon_steps)
-        result[5] = self.hero_hp
-        result[6] = float(alive_enemy.sum()) / 4.0
-        result[7] = float(alive_ally.sum()) / 4.0
-        result[8] = np.clip((float(self.terrain.height(self.enemy_xy[target])) - terrain_height) / height_span, -1.0, 1.0)
-        result[9] = 1.0
+        # Base layout mirrors the local lane-v3 bridge. Terrain remains part of
+        # the transition function rather than becoming an extra privileged cue.
+        result[0:2] = self.hero_xy / 8192.0
+        result[2:4] = self.hero_velocity / 550.0
+        result[4] = self.elapsed / 3600.0
+        result[5] = self.gold / 30000.0
+        result[6] = self.last_hits / 400.0
+        result[7] = self.xp / 30000.0
+        result[8] = 1.0
+        result[9] = min(distance / 11585.0, 1.5)
         # lane-v3-like visible last-hit context.
         lane = result[10:]
         lane[0:2] = np.clip(delta / 800.0, -1.0, 1.0)
-        lane[2] = np.clip(distance / 800.0, 0.0, 1.0)
+        lane[2] = np.clip(distance / 800.0, 0.0, 1.5)
         lane[3] = _health_bar_fraction(target_hp)
         lane[4] = np.clip((self.previous_target_hp - target_hp) / self.config.tick_seconds, -1.0, 1.0)
-        lane[5] = self.config.hero_attack_damage
+        lane[5] = self.config.hero_attack_damage * self.config.creep_max_health / max(self.enemy_max_health[target], 1.0)
         lane[6] = float(distance <= self.config.hero_attack_range)
         lane[7] = float(np.count_nonzero(alive_ally & (np.linalg.norm(self.ally_xy - self.enemy_xy[target], axis=1) < 230.0))) / 4.0
         lane[8:10] = np.clip(ally_delta / 800.0, -1.0, 1.0)
-        lane[10] = np.clip(ally_distance / 800.0, 0.0, 1.0)
-        lane[11] = _health_bar_fraction(self.ally_hp[nearest_ally] / self.config.creep_max_health)
-        lane[12] = float(alive_enemy.sum()) / 4.0
-        lane[13] = float(alive_ally.sum()) / 4.0
+        lane[10] = np.clip(ally_distance / 800.0, 0.0, 1.5)
+        lane[11] = _health_bar_fraction(self.ally_hp[nearest_ally] / max(self.ally_max_health[nearest_ally], 1.0))
+        lane[12] = min(float(alive_enemy.sum()) / 4.0, 1.5)
+        lane[13] = min(float(alive_ally.sum()) / 4.0, 1.5)
         lane[14] = np.clip((self.attack_ready_at - self.elapsed) / self.config.hero_attack_cooldown, 0.0, 1.0)
         return result
 
@@ -203,58 +226,108 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
             "source": self.source,
             "real_dota_verified": False,
             "navigation": "source_gridnav" if self.navigation is not None else "terrain_only",
+            "unit_definitions": self.unit_definitions.source,
         }
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
         self.hero_xy, self.enemy_xy, self.ally_xy, _center = self._spawn_layout()
-        self.enemy_hp.fill(self.config.creep_max_health)
-        self.ally_hp.fill(self.config.creep_max_health)
+        (self.enemy_max_health, self.enemy_health_regen, self.enemy_attack_damage,
+         self.enemy_attack_rate, self.enemy_attack_range) = self.unit_definitions.wave()
+        (self.ally_max_health, self.ally_health_regen, self.ally_attack_damage,
+         self.ally_attack_rate, self.ally_attack_range) = self.unit_definitions.wave()
+        self.enemy_hp = self.enemy_max_health.copy()
+        self.ally_hp = self.ally_max_health.copy()
+        self.enemy_attack_ready.fill(0.0)
+        self.ally_attack_ready.fill(0.0)
         self.hero_hp = np.float32(1.0)
+        self.hero_velocity.fill(0.0)
         self.previous_target_hp = np.float32(1.0)
         self.attack_ready_at = np.float32(0.0)
         self.elapsed, self.step_count = np.float32(0.0), 0
+        self.gold, self.last_hits, self.xp = np.float32(0.0), 0, np.float32(0.0)
         return self._observation(), self._info()
+
+    def _advance_creeps(self, positions: np.ndarray, health: np.ndarray, targets: np.ndarray,
+                        target_health: np.ndarray, attack_damage: np.ndarray, attack_rate: np.ndarray,
+                        attack_range: np.ndarray, ready_at: np.ndarray) -> None:
+        """One deterministic, source-stat-based auto-attack phase.
+
+        Projectile travel and full Dota aggro rules are deliberately omitted;
+        the static wave's health, regeneration, movement, range, damage, and
+        attack period are all sourced from the exported NPC definitions.
+        """
+        for index in np.flatnonzero(health > 0.0):
+            candidates = np.flatnonzero(target_health > 0.0)
+            if not len(candidates):
+                return
+            deltas = targets[candidates] - positions[index]
+            target = int(candidates[np.argmin(np.linalg.norm(deltas, axis=1))])
+            distance = float(np.linalg.norm(targets[target] - positions[index]))
+            if distance > attack_range[index]:
+                direction = (targets[target] - positions[index]) / max(distance, 1e-6)
+                proposed = positions[index] + direction * min(325.0 * self.config.tick_seconds, distance - attack_range[index])
+                if self._can_traverse(positions[index], proposed):
+                    positions[index] = proposed
+                distance = float(np.linalg.norm(targets[target] - positions[index]))
+            if distance <= attack_range[index] and self.elapsed >= ready_at[index]:
+                target_health[target] -= attack_damage[index]
+                ready_at[index] = self.elapsed + max(attack_rate[index], 0.01)
+
+    def _creep_combat_phase(self) -> None:
+        self.enemy_hp = np.where(self.enemy_hp > 0.0, np.minimum(
+            self.enemy_max_health, self.enemy_hp + self.enemy_health_regen * self.config.tick_seconds), 0.0)
+        self.ally_hp = np.where(self.ally_hp > 0.0, np.minimum(
+            self.ally_max_health, self.ally_hp + self.ally_health_regen * self.config.tick_seconds), 0.0)
+        self._advance_creeps(self.ally_xy, self.ally_hp, self.enemy_xy, self.enemy_hp,
+                             self.ally_attack_damage, self.ally_attack_rate, self.ally_attack_range,
+                             self.ally_attack_ready)
+        self.enemy_hp = np.maximum(self.enemy_hp, 0.0)
+        self._advance_creeps(self.enemy_xy, self.enemy_hp, self.ally_xy, self.ally_hp,
+                             self.enemy_attack_damage, self.enemy_attack_rate, self.enemy_attack_range,
+                             self.enemy_attack_ready)
+        self.ally_hp = np.maximum(self.ally_hp, 0.0)
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         if not self.action_space.contains(action):
             raise ValueError(f"action must be an integer in [0, {ACTION_DIM})")
         target_before = self._target()
-        self.previous_target_hp = np.float32(self.enemy_hp[target_before] / self.config.creep_max_health)
+        self.previous_target_hp = np.float32(self.enemy_hp[target_before] / max(self.enemy_max_health[target_before], 1.0))
         before_distance = self._target_distance(target_before)
         terrain_blocked = False
+        self.hero_velocity.fill(0.0)
         if 1 <= action <= 8:
             proposed = self.hero_xy + _DIRECTIONS[action] * (self.config.hero_move_speed * self.config.tick_seconds)
             if self._can_traverse(self.hero_xy, proposed):
+                self.hero_velocity = (proposed - self.hero_xy) / self.config.tick_seconds
                 self.hero_xy = proposed.astype(np.float32)
             else:
                 terrain_blocked = True
         target = self._target()
+        # Only hero movement earns approach shaping. Creep movement belongs to
+        # the environment and must not turn an invalid attack into a reward.
+        after_hero_distance = self._target_distance(target)
         in_buffer = self._target_distance(target) <= self.config.hero_attack_range + self.config.attack_range_buffer
         can_attack = action == ATTACK_ACTION and in_buffer and self.elapsed >= self.attack_ready_at
         hp_before_attack = self.enemy_hp[target]
+        hero_damage = self.config.hero_attack_damage * self.config.creep_max_health
         if can_attack:
-            self.enemy_hp[target] -= self.config.hero_attack_damage * self.config.creep_max_health
+            self.enemy_hp[target] -= hero_damage
             self.attack_ready_at = self.elapsed + self.config.hero_attack_cooldown
-        # Allied creeps provide pressure only to their nearest live enemy.
-        for ally in np.flatnonzero(self.ally_hp > 0.0):
-            candidates = np.flatnonzero(self.enemy_hp > 0.0)
-            if len(candidates):
-                nearest = candidates[np.argmin(np.linalg.norm(self.enemy_xy[candidates] - self.ally_xy[ally], axis=1))]
-                self.enemy_hp[nearest] -= self.config.allied_creep_damage_per_tick
+        self._creep_combat_phase()
         close_enemies = (self.enemy_hp > 0.0) & (np.linalg.norm(self.enemy_xy - self.hero_xy, axis=1) < 700.0)
         self.hero_hp -= self.config.enemy_creep_damage_per_tick * float(close_enemies.sum()) / self.config.creep_max_health
         self.enemy_hp = np.maximum(self.enemy_hp, 0.0)
         self.ally_hp = np.maximum(self.ally_hp, 0.0)
-        last_hit = bool(can_attack and hp_before_attack <= self.config.hero_attack_damage * self.config.creep_max_health)
-        after_distance = self._target_distance(self._target()) if (self.enemy_hp > 0.0).any() else before_distance
-        reward = float(np.clip((before_distance - after_distance) / 800.0, -0.03, 0.03))
+        last_hit = bool(can_attack and hp_before_attack <= hero_damage)
+        reward = float(np.clip((before_distance - after_hero_distance) / 800.0, -0.03, 0.03))
         if action >= 10 or (action == ATTACK_ACTION and not in_buffer):
             reward -= 0.02
         if terrain_blocked:
             reward -= 0.01
         if last_hit:
             reward += 1.0
+            self.last_hits += 1
         self.step_count += 1
         self.elapsed += self.config.tick_seconds
         terminated = bool(self.hero_hp <= 0.0 or not (self.enemy_hp > 0.0).any())
