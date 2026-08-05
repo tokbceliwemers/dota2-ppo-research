@@ -128,7 +128,16 @@ function RLPPOBridge:Observation()
         ally_health_bar = health_bar_fraction(nearest_ally:GetHealth(), nearest_ally:GetMaxHealth())
     end
     if self.hero.GetLastAttackTime ~= nil and self.hero.GetSecondsPerAttack ~= nil then
-        local seconds_per_attack = math.max(self.hero:GetSecondsPerAttack(), 0.001)
+        -- Current Dota builds bind GetSecondsPerAttack with one explicit
+        -- parameter.  Keep the calibrated fallback if an older/newer binding
+        -- rejects it, so an observation feature can never crash a rollout.
+        local seconds_per_attack = 0.75
+        local ok, observed_seconds = pcall(function()
+            return self.hero:GetSecondsPerAttack(false)
+        end)
+        if ok and type(observed_seconds) == "number" and observed_seconds > 0 then
+            seconds_per_attack = observed_seconds
+        end
         attack_recovery = clamp((self.hero:GetLastAttackTime() + seconds_per_attack - now) / seconds_per_attack, 0, 1)
     end
     local observation = {origin.x / 8192, origin.y / 8192, velocity.x / 550, velocity.y / 550,
