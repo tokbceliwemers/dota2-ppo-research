@@ -15,6 +15,7 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from grid_nav import GridNavigation
 from terrain import TerrainHeightmap
 
 
@@ -71,6 +72,8 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
         if render_mode not in (None, "ansi"):
             raise ValueError("only non-graphical ansi rendering is supported")
         self.terrain = TerrainHeightmap.from_data_directory(Path(data_directory))
+        nav_path = Path(data_directory) / "dota.gnv"
+        self.navigation = GridNavigation.from_file(nav_path) if nav_path.exists() else None
         self.config, self.render_mode = config, render_mode
         self.action_space = spaces.Discrete(ACTION_DIM)
         self.observation_space = spaces.Box(low=-1.0, high=1.0, shape=(OBSERVATION_DIM,), dtype=np.float32)
@@ -95,6 +98,8 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
             self.terrain.map_min + y.ravel() * self.terrain.cell_size,
         ), axis=1).astype(np.float32)
         acceptable = self.terrain.slope(points) <= self.config.max_ground_slope
+        if self.navigation is not None:
+            acceptable &= self.navigation.is_walkable(points)
         candidates = points[acceptable]
         if len(candidates) == 0:
             raise ValueError("heightmap has no terrain below max_ground_slope")
@@ -102,6 +107,29 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
 
     def _sample_wave_center(self) -> np.ndarray:
         return self._spawn_cells[int(self.np_random.integers(len(self._spawn_cells)))].copy()
+
+    def _can_traverse(self, start_xy: np.ndarray, end_xy: np.ndarray) -> bool:
+        if not self.terrain.traversable(start_xy, end_xy, self.config.max_ground_slope):
+            return False
+        return self.navigation is None or self.navigation.traversable(start_xy, end_xy)
+
+    def _spawn_layout(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Sample a wave only where the static GridNav accepts every actor."""
+        for _ in range(128):
+            center = self._sample_wave_center()
+            direction = self.np_random.normal(size=2).astype(np.float32)
+            direction /= max(float(np.linalg.norm(direction)), 1e-6)
+            perpendicular = np.array((-direction[1], direction[0]), dtype=np.float32)
+            hero = center - direction * 500.0
+            offsets = np.array((-1.5, -0.5, 0.5, 1.5), dtype=np.float32) * self.config.wave_spacing
+            enemies = center + np.outer(offsets, perpendicular)
+            allies = center + direction * 150.0 + np.outer(offsets, perpendicular)
+            points = np.vstack((hero[None, :], enemies, allies))
+            nav_ok = self.navigation is None or bool(np.all(self.navigation.is_walkable(points)))
+            terrain_ok = bool(np.all(self.terrain.contains(points)))
+            if nav_ok and terrain_ok and self._can_traverse(hero, center):
+                return hero.astype(np.float32), enemies.astype(np.float32), allies.astype(np.float32), center
+        raise RuntimeError("could not place a complete wave on traversable terrain and GridNav")
 
     def _target(self) -> int:
         alive = self.enemy_hp > 0.0
@@ -174,18 +202,12 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
             "game_seconds": float(self.elapsed),
             "source": self.source,
             "real_dota_verified": False,
+            "navigation": "source_gridnav" if self.navigation is not None else "terrain_only",
         }
 
     def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
         super().reset(seed=seed)
-        center = self._sample_wave_center()
-        direction = self.np_random.normal(size=2).astype(np.float32)
-        direction /= max(float(np.linalg.norm(direction)), 1e-6)
-        perpendicular = np.array((-direction[1], direction[0]), dtype=np.float32)
-        self.hero_xy = center - direction * 500.0
-        offsets = np.array((-1.5, -0.5, 0.5, 1.5), dtype=np.float32) * self.config.wave_spacing
-        self.enemy_xy = center + np.outer(offsets, perpendicular)
-        self.ally_xy = center + direction * 150.0 + np.outer(offsets, perpendicular)
+        self.hero_xy, self.enemy_xy, self.ally_xy, _center = self._spawn_layout()
         self.enemy_hp.fill(self.config.creep_max_health)
         self.ally_hp.fill(self.config.creep_max_health)
         self.hero_hp = np.float32(1.0)
@@ -203,7 +225,7 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
         terrain_blocked = False
         if 1 <= action <= 8:
             proposed = self.hero_xy + _DIRECTIONS[action] * (self.config.hero_move_speed * self.config.tick_seconds)
-            if self.terrain.traversable(self.hero_xy, proposed, self.config.max_ground_slope):
+            if self._can_traverse(self.hero_xy, proposed):
                 self.hero_xy = proposed.astype(np.float32)
             else:
                 terrain_blocked = True
@@ -247,4 +269,3 @@ class DotaTerrainLaneEnv(gym.Env[np.ndarray, int]):
         return (f"t={self.elapsed:.2f}s hero_hp={self.hero_hp:.3f} "
                 f"enemy_alive={int((self.enemy_hp > 0).sum())} target={self._target_index} "
                 f"ground={float(self.terrain.height(self.hero_xy)):.1f}")
-
