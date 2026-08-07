@@ -1,51 +1,23 @@
-# Direct Dota connection architecture
+# Local Shadow Fiend 1v1 Architecture
 
-## The two connections are different
+The project uses two local components:
 
-| Layer | Responsibility | Replaces the local addon? |
-| --- | --- | --- |
-| Session adapter (GC/GCS or custom-lobby management) | Create/join a lobby, select participants, read session state | No |
-| Gameplay adapter | Read world state, submit semantic hero orders, collect reward and terminal data | Yes, but only after it provides the same exact PPO contract |
+1. **Session launcher:** the local lab runner starts Dota Tools when needed,
+   launches `rl_ppo_local` on `template_map`, joins the local Radiant slot, and
+   owns only its loopback Python bridge.
+2. **Gameplay adapter:** the custom-game Lua addon reads observable game state,
+   sends semantic actions to the local bridge, executes them, and records exact
+   PPO transitions.
 
-A session/GC connection is not an in-game bot API. It cannot by itself provide
-the observations, executed actions, rewards, episode boundaries, old
-log-probabilities, and old values that PPO requires.
+The launcher is not a gameplay bot API. PPO requires the gameplay adapter to
+record the observation, valid action mask, sampled action, reward, terminal
+flag, old log-probability, and old value from the acting policy.
 
-The current local addon is the **gameplay adapter** for Stage 2. It is not a
-dead end: its observation/action/reward contract becomes the reference
-contract that every later gameplay adapter must satisfy.
+The Stage 3 objective is a reproducible local Shadow Fiend-versus-Shadow Fiend
+environment. It will add the opponent in observable, tested increments:
+passive enemy hero, frozen scripted opponent, then frozen checkpoint
+opponents. A simulator candidate is only an initializer and must pass local
+evaluation before it is used for real-Dota PPO.
 
-## Roadmap
-
-1. **Stage 1 — `replay` (bootstrap)**
-   - Use `.dem` state and position samples for approximate behavior cloning.
-   - Do not mistake inferred movement for exact human commands or PPO data.
-
-2. **Stage 2 — `replay_training` (current)**
-   - Finish a stable local last-hit curriculum.
-   - Improve collection throughput only when timing metrics preserve decision
-     coverage.
-   - Use the local MCP to automate launch, bridge lifecycle, rollout review,
-     evaluation, and CUDA PPO jobs.
-
-3. **Stage 3 — `rl_with_bots`**
-   - Move to local All Pick against scripted bots.
-   - Expand the gameplay adapter gradually: target selection, abilities,
-     inventory, objectives, survival, and match outcome rewards.
-   - Promote only after repeated evaluation beats a frozen bot baseline.
-
-4. **Stage 4 — `rl_with_humans`**
-   - Add the planned GCS/GC session adapter for matchmaking, lobby, draft, and
-     match coordination.
-   - Keep one fixed hero and the same gameplay adapter contract.
-   - Define and validate the gameplay adapter separately; the session adapter
-     does not replace gameplay control.
-   - Record semantic orders, targets, rewards, and outcomes using the canonical
-     deployment layout.
-
-## Immediate next milestone
-
-Collect a fresh **1x timing probe** with the 18-feature lane-v2 bridge, verify
-the decision cadence and archive validity, then collect a matched lane-v2
-batch for one PPO update and repeatable evaluation. This is the evidence needed
-to finish Stage 2 before starting All Pick bots.
+All interaction remains local and loopback-only. This design has no public
+lobby, matchmaking, UI automation, or direct game-binary control component.

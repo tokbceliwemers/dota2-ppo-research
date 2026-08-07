@@ -1,186 +1,345 @@
-# Dota 2 PPO Project Plan
+# Shadow Fiend 1v1 Project Plan
 
-## Scope and boundaries
+## Goal and safety boundary
 
-Build a single-hero (Shadow Fiend) research agent in small, measurable stages.
-Replay-derived actions, synthetic simulator data, and exact local-Dota PPO
-rollouts are different data sources and must never be mixed.
+Build a research Shadow Fiend agent that learns to play a controlled Dota 2
+**1v1 Shadow Fiend** matchup. Every Dota interaction remains restricted to the
+local `rl_ppo_local` custom game, the loopback bridge at `127.0.0.1`, and
+consenting local participants. The project never uses matchmaking, public
+lobbies, UI automation, binary modification, protocol injection, or remote
+game servers.
 
-All game interaction is limited to a human-started local `rl_ppo_local` custom
-lobby and its loopback bridge at `127.0.0.1`. There is no Dota MCP, UI
-automation, binary modification, protocol injection, or public matchmaking in
-this project.
+Replay-derived labels, synthetic simulator transitions, and exact local-Dota
+rollouts are separate sources. They must never be mixed into one PPO update.
 
-## Stage 1 - `replay`
+## Folder-stage map
 
-**Purpose:** create an offline behavior-cloning bootstrap from `.dem` files.
+| Stage | Folder | Role |
+| --- | --- | --- |
+| 1 | `sf1v1_replays` | Offline Shadow Fiend 1v1 replay dataset and behavior bootstrap. |
+| 2 | `sf1v1_simulator` | Fast, approximate non-rendered 1v1 simulator for candidate initialization only. |
+| 3 (current) | `sf1v1_training` | Exact local-Dota 1v1 environment, on-policy rollout collection, and PPO. |
+| 4 | `sf1v1_evaluation` | Frozen-opponent local evaluation and supervised, consent-based human evaluation. |
 
-- Parse replay state, positions, combat, objectives, and player data.
-- Infer movement labels from successive positions for one narrow hero/lane
-  curriculum.
-- Keep the limitation explicit: ordinary `.dem` files do not reliably contain
-  the physical keys or complete command stream that caused every action.
+`librarys` is retained as shared read-only research material, not a stage.
 
-**Exit criteria:** parsed match directories and a replay-derived movement
-behavior-cloning dataset exist, with provenance recorded.
+## Stage 1 — `sf1v1_replays`
 
-## Stage 2 - `replay_training` (current stage)
+**Purpose:** derive an offline Shadow Fiend 1v1 bootstrap from `.dem` files.
 
-**Purpose:** collect exact on-policy local-Dota trajectories and demonstrate
-repeatable last-hit improvement in one controlled lane drill.
+- Select replays with Shadow Fiend mid-lane examples; record match, patch, hero,
+  player, and filter provenance.
+- Parse observable state, movement, attack/ability outcomes, camera-independent
+  geometry, creep waves, and enemy-hero interactions.
+- Infer labels conservatively from state changes. Normal `.dem` files do not
+  reliably contain physical key presses or a complete player command stream.
+- Keep replay data as behavior-cloning or analysis data only, never local-Dota
+  PPO data.
 
-### Current lane curriculum: `lane_wave_clear_v4_fixed_progression`
+**Promotion rule:** a versioned SF 1v1 dataset and a reproducible behavior
+bootstrap checkpoint exist with its source manifest.
 
-- Observation contract: `lane-v3`, 25 features and 24 action IDs; ability and
-  item actions remain masked. It gives a target-relative, 20-segment health-bar
-  value (not exact hit points), recent health-bar loss rate, normalized hero
-  attack damage, attack range/recovery, allied creeps attacking the target, and
-  nearest allied-creep geometry/health. The policy must infer last-hit timing
-  from those visible cues rather than receiving a `last_hit_ready` oracle.
-- Reward: `+1` for a hero last hit, `-2` for hero death, approach shaping, and
-  a small terminal last-hit bonus.
-- Terminal conditions: hero death, 75-second fallback limit, or the four
-  tracked enemy creeps being cleared.
-- On a wave-clear terminal, the exact final transition is committed first;
-  Shadow Fiend and a fresh scripted wave then reset. A settled-state recovery
-  path handles a missed terminal callback.
-- Shadow Fiend receives no experience, has zero ability points, and clears
-  Necromastery level/stacks for every wave, keeping the micro-curriculum
-  stationary instead of making later waves easier.
-- Every new archive records `reward_version:
-  lane_wave_clear_v4_fixed_progression` and `observation_version: lane_v3`.
-  Older archives are not comparable with, or training data for, this
-  curriculum.
+## Stage 2 — `sf1v1_simulator`
 
-### Verified evidence
+**Purpose:** provide fast, deliberately approximate 1v1 pretraining.
 
-- The loopback bridge saves observation, sampled action, reward, terminal flag,
-  action mask, old log-probability, old value, game time, reward version, and
-  a SHA-256 identity of the policy checkpoint that sampled the transition.
-- Local attack targeting and the real entity-killed -> last-hit reward path were
-  exercised; a forced integration probe saved `+1.03685`.
-- A 600-event local calibration measured approximately 0.2667-second decision
-  spacing, 305 move speed, 525 attack range, 550 creep max health, and the
-  measured values used by the headless lane approximation.
-- `headless_lane_calibrated.pt` was trained on CUDA from the calibration report
-  and is explicitly marked `real_dota_verified: false`.
-- The first complete timeout-only A/B evaluation was cadence-comparable
-  (~3.75 decisions/game-second) but rejected the calibrated candidate: reward
-  per step was `0.00119` versus baseline `0.00555`, last-hit signals were 12
-  versus 17, and death signals were 5 versus 4. It is not eligible for PPO
-  promotion.
-- In a fresh local lobby, three consecutive forced enemy-wave clears each
-  emitted `lane episode committed; starting fresh wave`; the new-wave reset
-  path is now smoke-tested.
-- The first complete v4 A/B set passed all collection-quality gates: three
-  160-game-second archives per checkpoint, valid action masks, terminal
-  episodes, and comparable cadence (baseline 3.705 versus candidate 3.732
-  decisions/game-second). The calibrated headless candidate was rejected:
-  reward per step was `-0.01067` versus the baseline's `-0.00890`, it produced
-  6 versus 9 last-hit signals, and both had 13 death signals. It is not
-  eligible for real-Dota PPO promotion.
-- The `lane_v3` 25-feature observation contract is implemented in the local
-  bridge and the separate headless pretrainer. Fresh `lane_expert_bc_v3.pt`
-  and calibration-informed `headless_lane_context_v3.pt` checkpoints exist;
-  neither has yet been tested in a local-Dota `lane_v3` archive.
-- A CleanRL/TorchRL audit corrected a headless-only GAE trajectory-ordering
-  error, added a CUDA-resident vectorized simulator path, and made
-  allied-creep kills terminal without awarding a false last hit. The rebuilt
-  candidate consumed 131,072 approximate CUDA samples at 3,393 samples/second;
-  it remains `real_dota_verified: false`.
+- Preserve the terrain/GridNav and static NPC data already extracted.
+- Add only validated 1v1 state: both SF positions/facing/health/mana, creep
+  waves, attack timing, Shadowraze ranges/cooldowns, and a configurable frozen
+  opponent policy.
+- Calibrate directly measurable constants from local-Dota telemetry. Keep
+  unmeasured values explicit; do not call the approximation a Dota server.
+- Save candidates with `source: sf1v1_simulator` and
+  `real_dota_verified: false`.
 
-### Immediate next action
+**Promotion rule:** deterministic tests cover the 1v1 contract and a candidate
+checkpoint can be exported for Stage 3 evaluation. Synthetic transitions do
+not enter real-Dota PPO.
 
-1. Start a fresh local lobby/bridge using the prepared `lane-v3` checkpoints,
-   verify it produces a 25-feature archive without bridge errors, then
-   collect three complete normal-speed archives per policy. Compare only equal
-   reward and observation versions with `dota-ppo compare-rollouts`.
-2. Only after repeatable local improvement, collect fresh on-policy data from
-   the chosen policy and run one PPO update. Archive the data, report, reward
-   version, observation version, and resulting checkpoint together.
+## Stage 3 — `sf1v1_training` (current)
 
-**Exit criteria:** several independent `lane_wave_clear_v4_fixed_progression` batches show stable
-last-hit reward improvement over the frozen movement/behavior-cloning baseline,
-with no reset, action-mask, or cadence faults.
+**Purpose:** build the exact local-Dota Shadow Fiend 1v1 environment and train
+only from its instrumented, on-policy rollouts.
 
-## Fast offline pretraining (supporting Stage 2)
+### Curriculum
 
-`replay_training/src/dota_ppo/headless_lane.py` is a vectorized CUDA
-approximation for fast policy initialization. It is not Dota and is never PPO
-data. Its checkpoints carry `source: headless_lane_simulator` and
-`real_dota_verified: false`; normal `dota-ppo ppo` accepts only
-`local_instrumented_lobby` archives.
+1. **Lane foundation:** the existing fixed-progression last-hit drill remains
+   a regression test and behavior bootstrap; it is not 1v1 success evidence.
+2. **Passive enemy SF (implementation complete; local runtime validation
+   pending):** spawn a fixed level-1 opposing Shadow Fiend in a reproducible
+   lane state. Observe visible opponent geometry, quantized health/mana bars,
+   and facing only; do not grant hidden health, cooldown, or intent oracles.
+   The current contract is `sf1v1_passive_v1` with 32 observations. Fresh
+   data is separated into `data/training` (PPO eligible when validated) and
+   `data/evaluations` (held out).
+3. **Frozen scripted opponent:** enable bounded movement, attack, and one
+   verified ability at a time. Add mirrored action/observation telemetry,
+   projectiles, damage attribution, death/respawn, gold/XP, and items only
+   when each is tested locally.
+4. **PPO self-play candidates:** use frozen checkpoints as opponents. A new
+   policy is evaluated before it can become an opponent; do not train both
+   sides from the same rollout batch.
 
-`simulator/dota_lane_env.py` is a separate, single-environment Gymnasium
-reference for terrain-aware offline experiments. It reads
-`simulator/data/dota_heightmap.npy` with its recorded map bounds and raw-height
-range; movement is bounded and slope-gated, and observations contain ground
-height/slope context plus a quantized creep health bar. It now also consumes
-the original static `dota.gnv` GridNav file (64-unit cells, conservative
-walkability bit) for spawn and movement constraints. Its narrow 3-melee +
-1-ranged creep wave also consumes exported Source 2 NPC definitions for static
-health, regeneration, movement, range, damage, and attack-period values.
-GridNav and static values are not a full server-physics model and the
-environment shares the live `lane_v3` observation layout but remains an
-approximate data source, not local-Dota rollouts. Its only valid role is to
-test environment logic or initialize a candidate before local evaluation. Its
-masked PPO runner is `simulator/terrain_ppo.py`; it writes a checkpoint with
-`source: terrain_headless_gymnasium` and `real_dota_verified: false`, never a
-PPO rollout archive.
+### Evidence contract
 
-Use the local calibration report only for directly measured simulator fields.
-Attack buffer and attack cooldown remain explicit defaults until a controlled
-local measurement exists. See `replay_training/LANE_CALIBRATION.md` and
-`replay_training/HEADLESS_LANE_PRETRAINING.md`.
+- Each rollout records observation/action/reward/terminal/action mask, old
+  log probability/value, game time, reward version, observation version, and
+  checkpoint identity.
+- Local episode configuration records both checkpoint identities, side/team,
+  map, opponent mode, Dota build, and seed where available.
+- Rewards progress from lane control and last-hits to hero damage, survival,
+  tower/objective state, and only then match outcome. Reward changes create a
+  new version; old archives are not comparable.
+- The lab runner may start Dota Tools, launch
+  `dota_launch_custom_game rl_ppo_local template_map`, join the local Radiant
+  slot, start/stop the bridge it owns, and run bounded local batches. All
+  console commands remain loopback-only and audit-logged.
 
-## Stage 3 - `rl_with_bots`
+**Promotion rule:** at least three independent local batches against each
+frozen opponent show stable improvement over the declared baseline, with
+matching reward/observation versions, valid action masks, no reset/cadence
+faults, and reproducible reports. Only then is a local-Dota PPO update
+allowed.
 
-**Purpose:** move from the lane drill to controlled local matches against
-scripted bots, without skipping Stage 2 evidence.
+## Detailed execution plan
 
-- Fixed hero, lane, bot difficulty, reward version, and short episode contract.
-- Add abilities, inventory, target selection, ally/enemy context, objectives,
-  and match rewards incrementally.
-- Evaluate against a frozen local bot baseline before checkpoint promotion.
+This is the implementation order for the desired outcome: a locally trained,
+evaluated Shadow Fiend that can play a controlled 1v1 lane. Each milestone is
+small enough to test before more mechanics are added. A new reward,
+observation, action, or terminal definition creates a new version; archives
+from an older version are never silently reused for PPO.
 
-**Exit criteria:** the policy completes local bot matches without bridge errors
-and beats the frozen baseline across a defined evaluation set.
+### M0 — establish a trustworthy passive-opponent baseline
 
-## Stage 4 - supervised human evaluation (future; not active)
+**Goal:** prove that the current `sf1v1_passive_v1` contract runs end-to-end
+in a fresh local lobby.
 
-This stage is not started by the current project. Any future human testing must
-be separately scoped, consent-based, and supervised; it must not use public
-matchmaking, ranked queues, or UI automation. It requires Stage 3 evidence
-first and a new evaluation and safety plan.
+1. Start the 32-observation bootstrap checkpoint and local bridge.
+2. Launch `rl_ppo_local` on `template_map`; verify `rl_ppo_opponent` reports
+   exactly one passive Shadow Fiend on the opposite team.
+3. Collect one natural terminal batch, inspect it, and check its metadata:
+   `source=local_instrumented_lobby`, `collection_role=training`, 32-wide
+   observations, monotonic game time, valid masks, terminal final step, and
+   environment metadata naming the passive opponent.
+4. Run one held-out batch under the same checkpoint in `data/evaluations`.
 
-## Local collection boundary
+**Exit evidence:** the source and installed addon hashes match; both archives
+are readable; no Lua errors, missing transition, pending-decision, reset, or
+cadence fault occurs. This is a smoke test only, not a PPO update and not 1v1
+success.
 
-A person starts and observes the local custom match. The bounded supervisor may
-validate completed archives, evaluate a batch, and perform one PPO update; it
-does not start or control Dota. A `rl_ppo_finish` call is for an intentional
-early stop and produces an incomplete batch, so it is not valid for the
-150-second A/B gate.
+### M1 — make the combat state observable and controllable
 
-## Research references - `librarys`
+**Goal:** remove the current non-causal setup where the agent sees an enemy
+hero but cannot meaningfully interact with it.
 
-Fourteen pinned research checkouts are documented in `librarys/LIBRARIES.md`.
-They cover replay parsing, PPO/vector-environment engineering, imitation,
-future multi-agent interfaces, Dota constants, and historical Dota AI work.
-They are references only, not runtime dependencies. None is a maintained,
-faithful, high-speed Dota simulator; the local client remains the authority for
-on-policy PPO evidence.
+1. Define an explicit, versioned control layout. Keep `idle`, eight-direction
+   movement, `stop`, and `hold`; replace implicit “attack nearest creep” with
+   target-aware actions such as `attack_nearest_enemy_creep` and
+   `attack_enemy_hero`. Do not expose entity indices as policy actions.
+2. Make all safe movement directions available; do not mask retreating merely
+   because a creep is nearby. Masks should describe engine-invalid actions,
+   not strategy advice.
+3. Add visible self state: quantized own health/mana, facing, attack recovery,
+   movement state, and visible cooldown readiness. Add visible opponent state:
+   relative position, facing, quantized health/mana, and distance. Preserve
+   the rule that hidden cooldowns, exact opponent intent, and invisible units
+   are never included.
+4. Add a short fixed observation history (for example the last 4–8 decision
+   states) or a recurrent policy. Last-hit timing requires knowing recent
+   health-bar motion, attacks, and movement; one static frame is insufficient.
+5. Log the executed order, selected semantic target class, whether an attack
+   began, whether it landed, and its visible outcome. The logger—not inference
+   from reward—must establish damage attribution.
 
-## Promotion rule
+**Tests:** action-mask width matches the new action contract; every allowed
+action executes or produces a logged engine rejection; controlled and enemy
+target actions are distinguishable; no hidden-value field appears in the
+observation encoder.
 
-Do not skip stages. A checkpoint advances only when the prior stage's exit
-criteria are met and its source data, reward version, evaluation report, model
-file, and known limitations are recorded together.
+**Exit evidence:** a scripted manual test can make the controlled SF attack a
+creep and the enemy SF, while the rollout reports the correct semantic target
+and observation/action version.
+
+### M2 — frozen opponent and deterministic episode lifecycle
+
+**Goal:** turn the lane drill into a controlled one-sided 1v1 environment.
+
+1. Implement a frozen opponent policy outside the learning policy. Begin with
+   a reproducible schedule: hold lane position, then bounded movement, then
+   creep last-hit attacks, then one verified Shadowraze. Only one new behavior
+   is added per version.
+2. Give every episode a configuration record: map, controlled side, opponent
+   mode/checkpoint identity, opponent side, Dota build when available, seed or
+   deterministic scenario identifier, initial positions, level, gold, and
+   item set.
+3. Replace “enemy wave cleared” as the sole terminal condition. Use a fixed
+   game-time horizon plus hero death/respawn boundaries. A wave clearing by
+   allied creeps must be reported as an event, not awarded as a policy win.
+4. Reset both heroes, creeps, modifiers, gold, XP, cooldowns, Necromastery
+   stacks, and projectiles that belong to the scenario. Verify the opponent is
+   recreated or returned to the same state on every reset.
+5. Record hero damage dealt/taken, death, last hit, deny, net-worth change,
+   and time-in-lane as separate counters. Do not infer them from position.
+
+**Tests:** repeated seeded resets have the same observable start state; idle
+and active policies cannot receive the same lane-success outcome simply
+because allied creeps clear a wave; death/respawn settles the bridge before
+the next episode begins.
+
+**Exit evidence:** three repeated fixed-opponent episodes have identical
+initial state and valid terminal settlement, with distinct event counters for
+creeps and heroes.
+
+### M3 — causal reward design and calibration
+
+**Goal:** make reward answer “did this action improve the lane?” rather than
+“did game time advance?”
+
+1. Start from sparse, attributable events: hero last hit, deny, hero damage
+   dealt, hero damage received, death, and survival at horizon. Keep each
+   reward component in rollout metadata or a sidecar so reports can separate
+   them.
+2. Normalize damage rewards by the relevant maximum health and cap each
+   component to prevent one long combat from dominating the batch.
+3. Penalize hero death strongly enough to dominate speculative damage, but do
+   not reward a wave clearing event unless the policy has a measured causal
+   contribution.
+4. Add lane-resource terms only after their attribution is verified: gold/XP
+   delta and tower damage. Match outcome comes last, after a reliable local
+   match lifecycle exists.
+5. Calibrate attack cooldown, wind-up, projectile travel, and creep pressure
+   from local telemetry. Use the measurements in the simulator as
+   approximations; the local Dota rollout remains authoritative.
+
+**Tests:** forced last-hit, forced deny, forced hero damage, forced hero death,
+and idle wave-clear scenarios each yield only their expected reward components.
+
+**Exit evidence:** a reward audit report explains every nonzero component for
+sampled episodes, and an idle policy cannot earn a positive lane-control
+score merely from environmental progression.
+
+### M4 — fast simulator alignment, without contaminating PPO
+
+**Goal:** use `sf1v1_simulator` for speed while preserving the exact local-Dota
+training boundary.
+
+1. Mirror only the tested M1–M3 observable/action contract in Gymnasium.
+2. Implement the same frozen-opponent modes and scenario seeds, with explicit
+   flags for all approximated mechanics.
+3. Compare simulator traces to local telemetry for movement, attack timing,
+   projectile arrival, creep health trend, damage, and reset state. Revise
+   approximation constants from measurements rather than assumptions.
+4. Pretrain or behavior-clone simulator data into a candidate checkpoint only.
+   Mark every such checkpoint `real_dota_verified: false` until it passes M5.
+
+**Exit evidence:** deterministic simulator tests pass and a simulator-trained
+candidate can run the local smoke test. Simulator transitions never appear in
+`data/training` or a local-Dota PPO update.
+
+### M5 — disciplined local-Dota PPO loop
+
+**Goal:** improve one frozen policy against one declared opponent without
+off-policy mixing or evaluation leakage.
+
+1. Freeze a baseline checkpoint and frozen-opponent configuration.
+2. Collect at least three fresh `data/training` archives from exactly one
+   policy SHA-256 and one environment/reward/observation version. A batch must
+   end terminally and pass `dota-ppo inspect-rollouts`.
+3. Merge only that cohort, run one PPO update, and save its checkpoint plus
+   update manifest. Do not continue collecting with the old bridge after the
+   checkpoint changes.
+4. Restart the bridge on the new checkpoint and collect a new cohort. Never
+   train both sides from the same collected transitions.
+5. Keep learning-rate, epochs, batch size, entropy, clipping, advantage
+   normalization, action distribution, reward components, and checkpoint SHA
+   in the manifest. Do not judge improvement from policy/value loss alone.
+
+**Exit evidence:** no archive is rejected for version, collection role,
+checkpoint SHA, invalid mask, non-monotonic time, or terminal state; each PPO
+update is traceable to a single cohort and environment version.
+
+### M6 — held-out evaluation and frozen-opponent promotion
+
+**Goal:** decide whether a candidate is genuinely better than the baseline.
+
+1. Run baseline and candidate in `data/evaluations`, never `data/training`.
+2. Use at least three independent batches for every opponent mode, starting
+   side, and declared scenario seed. Hold opponent settings fixed within each
+   comparison.
+3. Report: deaths, damage dealt/taken, last hits, denies, net worth/XP,
+   survival time, tower/objective metrics when present, action validity,
+   reset/cadence faults, and reward components. Compare distribution and
+   consistency, not just one aggregate reward.
+4. Promote a candidate to a frozen opponent only when it improves the
+   predeclared primary metrics across repeated held-out runs without a safety
+   or lifecycle regression.
+
+**Exit evidence:** versioned JSON reports, the frozen baseline/candidate
+checkpoint hashes, raw held-out archive list, and a decision record explaining
+promotion or rejection.
+
+### M7 — controlled self-play, then supervised human evaluation
+
+**Goal:** broaden the opponent distribution only after frozen-opponent results
+are reliable.
+
+1. Build an opponent pool of promoted, immutable checkpoints and sample one
+   per complete episode. Record both checkpoint hashes in the archive.
+2. Train only the controlled side. Opponent policies stay frozen throughout
+   a collection batch; periodically add a promoted policy to the pool after
+   held-out evaluation.
+3. Add abilities, item choices, tower pressure, and match outcomes one
+   independently tested version at a time. Re-run M3–M6 for each new
+   mechanics contract.
+4. Human evaluation, if desired, is consent-based, local, unranked, and
+   supervised. It produces evaluation reports, not unverified PPO labels.
+
+**Exit evidence:** the project can reproduce results against a documented
+opponent pool and clearly states which Dota mechanics remain unsupported.
+
+### Investigation checklist when a candidate fails to improve
+
+Before changing PPO hyperparameters, inspect these in order:
+
+1. Is the archive from the current environment, reward, observation, and
+   checkpoint SHA, with `collection_role=training`?
+2. Do event counters show that policy actions cause last hits/damage/deaths,
+   rather than the environment progressing by itself?
+3. Are the needed actions actually unmasked, executed, and represented in the
+   action distribution?
+4. Can the policy observe the information needed at the decision time,
+   including recent timing history?
+5. Is the collected cohort sufficiently large and varied before multiple PPO
+   epochs are applied?
+6. Does the candidate improve held-out, frozen-opponent metrics—not just PPO
+   loss or one rollout reward?
+
+## Stage 4 — `sf1v1_evaluation`
+
+**Purpose:** measure a frozen agent in local 1v1 games without changing it.
+
+- Evaluate against held-out scripted and frozen-checkpoint opponents across
+  starting sides, seeds, and lane conditions.
+- Report lane metrics, deaths, damage, net worth/XP, objectives, and match
+  outcomes separately; no single reward number is sufficient.
+- Any human testing is separately scoped, consent-based, supervised, local,
+  and unranked. It is never public matchmaking.
+
+**Promotion rule:** publish the exact checkpoints, environment version,
+opponent set, reports, limitations, and reproducible local instructions.
+
+## Historical assets
+
+The previous single-hero lane archives, calibration reports, and simulator
+checkpoints are retained under `sf1v1_training` and `sf1v1_simulator` as
+historical bootstrap evidence. They are not proof that the 1v1 goal is met,
+and they must not be relabeled as 1v1 data.
 
 ## Prompt for the next implementation session
 
-> Work on the next incomplete Stage 2 action. First read this file and inspect
-> the current artifacts and tests. Preserve the separation between replay
-> behavior cloning, headless simulator pretraining, and exact local-Dota PPO
-> rollouts. Implement the smallest testable local curriculum improvement, add
-> or update tests, verify it, and provide only the human-operated local test
-> command needed next. Do not claim a promotion without the stated evidence.
+> Read this file in full. Work on the next incomplete Stage 3 curriculum step:
+> add the smallest observable, testable part of a local Shadow Fiend 1v1
+> environment. Preserve the separation between replay, simulator, and exact
+> local-Dota data. Add tests and report the concrete evidence; do not claim a
+> 1v1 promotion without the Stage 3 rule.

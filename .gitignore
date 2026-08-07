@@ -12,6 +12,18 @@
 /replay_training/reports/
 /replay_training/deploy/
 
+# Current Shadow Fiend 1v1 stage outputs (the historical paths above are kept
+# while Git detects the directory rename).
+/sf1v1_training/data/
+/sf1v1_training/checkpoints/
+/sf1v1_training/reports/
+/sf1v1_training/deploy/
+/sf1v1_training/logs/
+/sf1v1_simulator/data/
+/sf1v1_evaluation/data/
+/sf1v1_evaluation/reports/
+/sf1v1_evaluation/logs/
+
 # Downloaded third-party research references are documented, not vendored.
 /librarys/*
 !/librarys/LIBRARIES.md

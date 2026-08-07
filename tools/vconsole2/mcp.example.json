@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "vconsole2-local": {
+      "command": "C:\\Path\\To\\python.exe",
+      "args": ["C:\\Path\\To\\dota2\\tools\\vconsole2\\vconsole2_mcp.py"],
+      "env": {
+        "VCONSOLE_NETCONSOLE_HOST": "127.0.0.1",
+        "VCONSOLE_NETCONSOLE_PORT": "2121",
+        "VCONSOLE_LOCAL_COMMANDS": "status,rl_ppo_progress",
+        "VCONSOLE_ALLOW_ARBITRARY_LOCAL_COMMANDS": "true",
+        "DOTA_TOOLS_EXE": "C:\\Path\\To\\dota 2 beta\\game\\bin\\win64\\dota2.exe",
+        "SF1V1_TRAINING_ROOT": "C:\\Path\\To\\dota2\\sf1v1_training"
+      }
+    }
+  }
+}

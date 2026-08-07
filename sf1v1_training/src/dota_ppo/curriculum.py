@@ -1,0 +1,85 @@
+"""Fast synthetic lane demonstrations for a live-Dota PPO warm start."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from .actions import ACTION_IDS, movement_action
+from .data import Trajectories, save_trajectories
+from .observations import (LANE_FEATURE_DIM, OBSERVATION_DIM, PASSIVE_OPPONENT_FEATURE_DIM,
+                           health_bar_fraction)
+
+
+def synthetic_lane_expert(steps: int, seed: int = 7) -> Trajectories:
+    """Generate a compact approach/last-hit curriculum, not PPO rollouts.
+
+    It intentionally models only the features available in the live lane-v3
+    bridge.  Its scripted labels make `attack` visible to the initial policy;
+    only later local Dota rollouts determine the true PPO update.
+    """
+    if steps < 1:
+        raise ValueError("steps must be positive")
+    rng = np.random.default_rng(seed)
+    angle = rng.uniform(-np.pi, np.pi, steps)
+    distance = rng.uniform(40, 800, steps)
+    dx, dy = np.cos(angle) * distance, np.sin(angle) * distance
+    attack_range = 500.0
+    health = rng.uniform(0.02, 1.0, steps)
+    health_loss_rate = rng.uniform(0.0, 0.16, steps)
+    hero_damage = np.full(steps, 0.085, dtype=np.float32)
+    allied_pressure = rng.integers(0, 5, steps) / 4
+    ally_angle = rng.uniform(-np.pi, np.pi, steps)
+    ally_distance = rng.uniform(40, 650, steps)
+    ally_dx, ally_dy = np.cos(ally_angle) * ally_distance, np.sin(ally_angle) * ally_distance
+    ally_health = rng.uniform(0.1, 1.0, steps)
+    in_range = distance <= attack_range
+    last_hit_ready = health <= hero_damage + health_loss_rate * 0.25
+    base = np.zeros((steps, 10), dtype=np.float32)
+    base[:, 4] = rng.uniform(0, 0.03, steps)  # early-lane time proxy
+    base[:, 8] = 1.0
+    lane = np.zeros((steps, LANE_FEATURE_DIM), dtype=np.float32)
+    lane[:, 0] = dx / 800
+    lane[:, 1] = dy / 800
+    lane[:, 2] = distance / 800
+    lane[:, 3] = health_bar_fraction(health)
+    lane[:, 4] = health_loss_rate
+    lane[:, 5] = hero_damage
+    lane[:, 6] = in_range.astype(np.float32)
+    lane[:, 7] = allied_pressure
+    lane[:, 8] = ally_dx / 800
+    lane[:, 9] = ally_dy / 800
+    lane[:, 10] = ally_distance / 800
+    lane[:, 11] = health_bar_fraction(ally_health)
+    lane[:, 12] = rng.integers(1, 5, steps) / 4
+    lane[:, 13] = rng.integers(1, 5, steps) / 4
+    lane[:, 14] = rng.uniform(0, 1, steps)
+    # This is a bootstrap distribution only.  Its opponent values are visible
+    # quantities, but scripted labels still teach lane movement/last hits, not
+    # a claim of expert 1v1 combat behaviour.
+    opponent = np.zeros((steps, PASSIVE_OPPONENT_FEATURE_DIM), dtype=np.float32)
+    opponent[:, 0] = 1.0
+    opponent[:, 1:3] = rng.uniform(-0.65, 0.65, (steps, 2))
+    opponent[:, 3] = np.clip(np.linalg.norm(opponent[:, 1:3], axis=1), 0, 1.5)
+    opponent[:, 4:6] = rng.uniform(0.25, 1.0, (steps, 2))
+    opponent[:, 6] = rng.uniform(-1.0, 1.0, steps)
+    observations = np.concatenate((base, lane, opponent), axis=1)
+    actions = np.array([movement_action(float(x), float(y), deadzone=10.0) for x, y in zip(dx, dy)], dtype=np.int64)
+    actions[in_range & last_hit_ready] = ACTION_IDS["attack"]
+    rewards = np.where(actions == ACTION_IDS["attack"], 1.0, 0.02).astype(np.float32)
+    dones = np.zeros(steps, dtype=bool)
+    dones[::max(1, steps // 32)] = True
+    dones[-1] = True
+    data = Trajectories(observations, actions, rewards, dones, "synthetic_lane_expert")
+    data.validate()
+    if data.observations.shape[1] != OBSERVATION_DIM:
+        raise AssertionError("synthetic curriculum observation layout drifted")
+    return data
+
+
+def build_synthetic_lane_expert(output: str, steps: int = 100_000, seed: int = 7) -> dict[str, object]:
+    data = synthetic_lane_expert(steps, seed)
+    from pathlib import Path
+
+    path = Path(output)
+    save_trajectories(path, data, {"curriculum": "synthetic_lane_expert_v1", "seed": seed})
+    return {"steps": len(data.actions), "attack_labels": int((data.actions == ACTION_IDS["attack"]).sum()), "output": str(path)}

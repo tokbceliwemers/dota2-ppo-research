@@ -12,7 +12,7 @@ Thank you for helping improve this research project.
 ## Before opening an issue
 
 1. Read `PROJECT_PLAN.md` and the relevant component README.
-2. Run the narrowest relevant test, normally `pytest -q` from `replay_training`.
+2. Run the narrowest relevant test, normally `pytest -q` from `sf1v1_training`.
 3. Search existing issues first.
 4. Include exact commands and sanitized logs.
 

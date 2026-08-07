@@ -67,7 +67,7 @@ provenance checks or the local-Dota evaluation gate with an offline library.
 ## Applied PPO/simulator audit (2026-08-05)
 
 The CleanRL/TorchRL review led to four tested changes in
-`replay_training`, without importing either package:
+`sf1v1_training`, without importing either package:
 
 1. Headless rollouts are now laid out environment-major before GAE, so values
    and terminals never cross from one simulated lane into another.

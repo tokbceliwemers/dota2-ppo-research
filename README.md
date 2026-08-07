@@ -1,46 +1,75 @@
-# Dota 2 PPO Research
+# Shadow Fiend 1v1 Research
 
-Experimental, local-only research tooling for a Shadow Fiend reinforcement-learning curriculum in Dota 2.
+Local-only research tooling for a Dota 2 Shadow Fiend agent that learns a
+controlled 1v1 matchup. It is not a public-match, ranked, or unattended
+deployment bot.
 
-> **Research status:** this is an in-progress project, currently in the controlled lane last-hit curriculum. It is not a public-match bot, does not support ranked or public matchmaking, and has not reached full-match play.
+## Current status — honest scope
 
-## What is in this repository
+The project is in **Stage 3**. It has a locally instrumented Shadow Fiend lane
+foundation and a new `sf1v1_passive_v1` contract that spawns a visible,
+passive enemy Shadow Fiend. The active model receives 32 observable features
+and produces masked discrete actions through a loopback-only bridge.
 
-- `replay/` — downloads and records a reproducible corpus of Shadow Fiend replay files, then derives limited behavior-cloning data from replay state.
-- `replay_training/` — CUDA/PyTorch behavior cloning, a loopback-only local Dota PPO bridge, PPO rollout validation, local lane calibration, and evaluation tools.
-- `simulator/` — a fast non-rendered lane approximation for pretraining only. It is never treated as Dota PPO evidence.
-- `PROJECT_PLAN.md` — the staged roadmap, evidence requirements, and safety boundaries.
+It is **not yet a complete 1v1 bot**: the passive opponent does not yet use a
+frozen combat policy, the controlled policy cannot yet choose enemy-hero
+attacks, and no self-play or public-game deployment exists. Historical lane
+rollouts are useful diagnostics, not evidence of 1v1 performance.
 
-## Current capabilities
+## Stages
 
-The active Stage 2 lane curriculum runs Shadow Fiend in a human-started, local custom lobby. The bridge records the exact observation, sampled action, reward, terminal flag, action mask, old policy log-probability/value, game time, reward version, and checkpoint identity needed for valid PPO updates.
+| Folder | Stage | Purpose |
+| --- | --- | --- |
+| `replay/` → `sf1v1_replays/` | 1 | Offline replay parsing and behavior bootstrap. The rename completes after the current Codex workspace closes. |
+| `sf1v1_simulator/` | 2 | Fast approximate 1v1 initialization only; never real-Dota PPO data. |
+| `sf1v1_training/` | 3 | Current: exact local-Dota 1v1 environment, rollout collection, and PPO. |
+| `sf1v1_evaluation/` | 4 | Frozen-opponent and consent-based local evaluation. |
 
-The current task is to demonstrate repeatable local last-hit improvement against a frozen baseline. It is **not** a claim of a trained full-game Dota agent.
+The complete curriculum, evidence requirements, and promotion rules are in
+[PROJECT_PLAN.md](PROJECT_PLAN.md).
 
-## Boundaries
+## Safety boundary
 
-- Local custom lobbies only; a person starts and observes every Dota session.
-- No public matchmaking, ranked queues, UI automation, binary modification, protocol injection, or game-client MCP control.
-- Replay-derived labels, headless-simulator data, and exact local-Dota PPO data remain separate.
-- Model files, replays, cached data, rollouts, and local evaluation outputs are intentionally not versioned.
+- Local `rl_ppo_local` custom games and loopback services only.
+- No matchmaking, public lobbies, UI automation, binary modification, protocol
+  injection, or remote game-server control.
+- Replay, simulator, and exact local-Dota data remain separate sources.
 
 ## Quick start
 
-Read the roadmap first, then follow the component documentation:
-
 ```powershell
-git clone https://github.com/<your-account>/dota2-ppo-research.git
-Set-Location dota2-ppo-research\replay_training
+Set-Location C:\Users\skaya\Desktop\dota2\sf1v1_training
 python -m pip install -e .
 pytest -q
 ```
 
-For Stage 2 local collection and comparison, see [`replay_training/LOCAL_POLICY_COMPARISON.md`](replay_training/LOCAL_POLICY_COMPARISON.md).
+The lane drill is retained as a regression-tested bootstrap. The next work is
+to make combat target-aware, add a frozen scripted enemy SF, and use causal
+damage/death/last-hit telemetry before attempting meaningful PPO improvement.
 
-## Contributing and reporting problems
+## Data and checkpoint boundary
 
-Bug reports, reproducible rollout-validation failures, and documentation improvements are welcome. Please include your operating system, Python/PyTorch versions, the exact command, and sanitized console output. Do not upload replay files, model checkpoints, account details, access tokens, or public-match material.
+Git intentionally excludes replay files, local rollouts, checkpoints, logs,
+and reports. They can contain large files or local-only material and are not
+needed to reproduce the source tree.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guidance.
+- `sf1v1_replays` / current `replay`: behavior-cloning and analysis data only.
+- `sf1v1_simulator`: fast approximation and candidate initialization only.
+- `sf1v1_training/data/training`: fresh exact local-Dota trajectories eligible
+  for PPO after validation.
+- `sf1v1_training/data/evaluations`: held-out measurement; never PPO input.
 
-**Topics:** #Dota2 #ReinforcementLearning #PPO #PyTorch #GameAI #Research
+See [sf1v1_training/SF1V1_ROLLOUTS.md](sf1v1_training/SF1V1_ROLLOUTS.md) for
+the archive contract and [PROJECT_PLAN.md](PROJECT_PLAN.md) for the required
+evidence before a candidate can be promoted.
+
+## Optional local console companion
+
+[tools/vconsole2](tools/vconsole2) contains the versioned, dependency-free
+localhost MCP companion used for bounded local collection. It is optional and
+does not automate a VConsole window, alter binaries, or connect to public
+servers. Its setup file uses placeholder paths; configure it only for your own
+local Dota Tools installation.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for reproducibility and reporting
+guidance.
